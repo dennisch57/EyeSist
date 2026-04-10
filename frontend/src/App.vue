@@ -1,47 +1,38 @@
 <script setup>
-import HelloWorld from './components/HelloWorld.vue'
-import TheWelcome from './components/TheWelcome.vue'
+import AppHeader from "@/components/AppHeader.vue";
+import Camera from "@/components/Camera.vue";
+import TextOutput from "@/components/TextOutput.vue";
+import Keyboard from "@/components/Keyboard.vue";
 </script>
 
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="./assets/logo.svg" width="125" height="125" />
+  <AppHeader />
 
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
+  <div class="page-content">
+    <div class="center-row">
+      <Camera />
+      <TextOutput />
     </div>
-  </header>
-
-  <main>
-    <TheWelcome />
-  </main>
+    <div class="keyboard-section">
+      <Keyboard />
+    </div>
+  </div>
 </template>
 
-<style scoped>
-header {
-  line-height: 1.5;
+<style>
+.page-content {
+  padding-top: 60px;
 }
 
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
+.center-row {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 40px;
 }
 
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
+.keyboard-section {
+  margin: 20px auto;
+  width: 50%;
 }
 </style>
