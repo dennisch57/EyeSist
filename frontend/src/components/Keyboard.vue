@@ -15,9 +15,9 @@
     <!-- Keyboard -->
     <div :class="['keys', selectedLayout.toLowerCase()]">
       <button
-        v-for="key in currentKeys"
+        v-for="(key, index) in currentKeys"
         :key="key.main || key"
-        class="key"
+        :class="['key', activeIndex === index ? 'active-key' : '']"
         @click="pressKey(key.main || key)"
       >
         <template v-if="selectedLayout === 'NOKIA'">
@@ -45,6 +45,8 @@
 
     <!-- Selected Key Display -->
     <p class="selected">Selected Key: {{ selectedKey }}</p>
+
+    <p>Eye Direction: {{ direction }}</p>
   </div>
 </template>
 
@@ -52,10 +54,13 @@
   import { ref, computed } from "vue";
   import { watch } from "vue";
   import { keyboardText } from "@/store/keyboardText";
+  import { onMounted, onUnmounted } from "vue";
 
   const { addKey, selectedKey, resetMultiTap } = keyboardText();
 
   const selectedLayout = ref("QWERTY");
+
+  const activeIndex = ref(0);
 
   const layouts = ["QWERTY", "NOKIA"];
 
@@ -89,6 +94,36 @@
   const pressKey = (key) => {
     addKey(key, selectedLayout.value);
   };
+
+  const moveSelection = (direction) => {
+    const cols = selectedLayout.value === "NOKIA" ? 3 : 10;
+
+    if (direction === "right") activeIndex.value++;
+    if (direction === "left") activeIndex.value--;
+    if (direction === "down") activeIndex.value += cols;
+    if (direction === "up") activeIndex.value -= cols;
+
+    // clamp
+    if (activeIndex.value < 0) activeIndex.value = 0;
+    if (activeIndex.value >= currentKeys.value.length)
+      activeIndex.value = currentKeys.value.length - 1;
+  };
+
+  const handleKeydown = (e) => {
+    if (e.key === "ArrowRight") moveSelection("right");
+    if (e.key === "ArrowLeft") moveSelection("left");
+    if (e.key === "ArrowDown") moveSelection("down");
+    if (e.key === "ArrowUp") moveSelection("up");
+
+    // simulate blink/select
+    if (e.key === "Enter") {
+      const key = currentKeys.value[activeIndex.value];
+      pressKey(key.main || key);
+    }
+  };
+
+  onMounted(() => window.addEventListener("keydown", handleKeydown));
+  onUnmounted(() => window.removeEventListener("keydown", handleKeydown));
 
   watch(selectedLayout, () => {
     resetMultiTap();
@@ -124,6 +159,11 @@
 
   .active {
     background: #3b82f6;
+  }
+
+  .active-key {
+    background: #3b82f6;
+    box-shadow: 0 0 10px #3b82f6;
   }
 
   .keys {
