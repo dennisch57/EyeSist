@@ -32,7 +32,11 @@
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true
+        video: {
+          width: { min: 640, ideal: 1920, max: 1920 },
+          height: { min: 480, ideal: 1080, max: 1080 },
+          frameRate: { ideal: 30 }
+        }
       });
 
       videoRef.value.srcObject = stream;
@@ -55,6 +59,8 @@
 
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0);
+
+    console.log("Resolution:", video.videoWidth, "x", video.videoHeight);
 
     const base64 = canvas.toDataURL("image/jpeg");
 
