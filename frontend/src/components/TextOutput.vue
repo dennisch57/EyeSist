@@ -5,10 +5,15 @@
         <button class="speak-btn" @click="speakText">🔊 Speak</button>
     </div>
 
-    <textarea
-      v-model="text"
-      placeholder="Start typing with your eyes..."
-    ></textarea>
+    <div class="text-box">
+      <span
+        v-for="(t, index) in text"
+        :key="index"
+        :class="t.finalized ? 'final' : 'preview'"
+      >
+        {{ t.char }}
+      </span>
+    </div>
 
     <p class="char-count">{{ text.length }} characters</p>
   </div>
@@ -46,15 +51,24 @@ const speakText = () => {
   color: #cbd5f5;
 }
 
-textarea {
+.text-box {
   width: 100%;
   height: 215px;
   background: #0f172a;
-  border: none;
   border-radius: 8px;
   padding: 10px;
   color: white;
-  resize: none;
+  word-wrap: break-word;
+}
+
+/* finalized text */
+.final {
+  color: white;
+}
+
+/* preview text */
+.preview {
+  color: #94a3b8; /* grey */
 }
 
 .char-count {

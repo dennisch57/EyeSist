@@ -50,13 +50,14 @@
 
 <script setup>
   import { ref, computed } from "vue";
+  import { watch } from "vue";
   import { keyboardText } from "@/store/keyboardText";
 
-  const { addKey, selectedKey } = keyboardText();
+  const { addKey, selectedKey, resetMultiTap } = keyboardText();
 
   const selectedLayout = ref("QWERTY");
 
-  const layouts = ["QWERTY", "NOKIA", "HERO"];
+  const layouts = ["QWERTY", "NOKIA"];
 
   const qwertyKeys = [
     "1","2","3","4","5","6","7","8","9","0",
@@ -79,17 +80,19 @@
     { main: "0", sub: "␣" },
     { main: "#", sub: "" }
   ];
-  const heroKeys = ["←","→","↑","↓","OK"];
 
   const currentKeys = computed(() => {
     if (selectedLayout.value === "NOKIA") return nokiaKeys;
-    if (selectedLayout.value === "HERO") return heroKeys;
     return qwertyKeys;
   });
 
   const pressKey = (key) => {
-    addKey(key);
+    addKey(key, selectedLayout.value);
   };
+
+  watch(selectedLayout, () => {
+    resetMultiTap();
+  });
   </script>
 
   <style scoped>
@@ -107,7 +110,7 @@
   }
 
   .layout-buttons .btn {
-    width: 33%;
+    width: 50%;
   }
 
   .btn {
