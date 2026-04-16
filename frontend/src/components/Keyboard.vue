@@ -54,12 +54,13 @@
   import { ref, computed } from "vue";
   import { watch } from "vue";
   import { keyboardText } from "@/store/keyboardText";
+  import { useEyeStore } from "@/store/eyeStore";
   import { onMounted, onUnmounted } from "vue";
 
   const { addKey, selectedKey, resetMultiTap } = keyboardText();
+  const { direction } = useEyeStore();
 
   const selectedLayout = ref("QWERTY");
-
   const activeIndex = ref(0);
 
   const layouts = ["QWERTY", "NOKIA"];
@@ -98,12 +99,13 @@
   const moveSelection = (direction) => {
     const cols = selectedLayout.value === "NOKIA" ? 3 : 10;
 
+    // update activeIndex based on direction
     if (direction === "right") activeIndex.value++;
     if (direction === "left") activeIndex.value--;
     if (direction === "down") activeIndex.value += cols;
     if (direction === "up") activeIndex.value -= cols;
 
-    // clamp
+    // clamp activeIndex within bounds
     if (activeIndex.value < 0) activeIndex.value = 0;
     if (activeIndex.value >= currentKeys.value.length)
       activeIndex.value = currentKeys.value.length - 1;
@@ -127,6 +129,15 @@
 
   watch(selectedLayout, () => {
     resetMultiTap();
+  });
+
+  watch(direction, (dir) => {
+    if (dir === "closed") {
+    const key = currentKeys.value[activeIndex.value];
+    pressKey(key.main || key);
+  } else if (dir !== "open") {
+      moveSelection(dir);
+    }
   });
   </script>
 

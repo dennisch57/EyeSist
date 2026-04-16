@@ -17,23 +17,87 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+  import { ref } from "vue";
+  import { useEyeStore } from "@/store/eyeStore";
 
-const videoRef = ref(null);
-const isActive = ref(false);
+  const { direction } = useEyeStore();
 
-const startCamera = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true
-    });
+  const handlePrediction = (dir) => {
+    direction.value = dir;
+  };
 
-    videoRef.value.srcObject = stream;
-    isActive.value = true;
-  } catch (err) {
-    console.error("Camera error:", err);
-  }
-};
+  const videoRef = ref(null);
+  const isActive = ref(false);
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true
+      });
+
+      videoRef.value.srcObject = stream;
+      isActive.value = true;
+
+      startStreaming();
+    } catch (err) {
+      console.error("Camera error:", err);
+    }
+  };
+
+  let interval = null;
+
+  const sendFrame = () => {
+    const canvas = document.createElement("canvas");
+    const video = videoRef.value;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+
+    const base64 = canvas.toDataURL("image/jpeg");
+
+    sendToBackend(base64);
+  };
+
+  const startStreaming = () => {
+    interval = setInterval(sendFrame, 200); // 5 FPS (good balance)
+  };
+
+  // const sendToBackend2 = (base64) => {
+  //   fetch("/api/eye-tracking", {
+  //     method: "POST",
+  //     headers: { "Content-Type": "application/json" },
+  //     body: JSON.stringify({ image: base64 })
+  //   })
+  //     .then((res) => res.json())
+  //     .then((data) => {
+  //       console.log("Backend response:", data);
+  //     })
+  //     .catch((err) => {
+  //       console.error("Error sending frame:", err);
+  //     });
+  // };
+
+  const sendToBackend = async (image) => {
+    try {
+      const res = await fetch("http://localhost:8000/predict", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ image }),
+      });
+
+      const data = await res.json();
+
+      handlePrediction(data.direction);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
 </script>
 
 <style scoped>

@@ -22,12 +22,12 @@
 <script setup>
 import { keyboardText } from "@/store/keyboardText";
 
-const { text } = keyboardText();
+const { text, displayText } = keyboardText();
 
 const speakText = () => {
   if (!text.value) return;
 
-  const speech = new SpeechSynthesisUtterance(text.value);
+  const speech = new SpeechSynthesisUtterance(displayText.value);
   window.speechSynthesis.speak(speech);
 };
 </script>
