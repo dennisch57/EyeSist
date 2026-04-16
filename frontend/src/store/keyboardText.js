@@ -8,14 +8,14 @@ let tapIndex = 0;
 let timer = null;
 
 const multiTapMap = {
-  "2": ["A", "B", "C"],
-  "3": ["D", "E", "F"],
-  "4": ["G", "H", "I"],
-  "5": ["J", "K", "L"],
-  "6": ["M", "N", "O"],
-  "7": ["P", "Q", "R", "S"],
-  "8": ["T", "U", "V"],
-  "9": ["W", "X", "Y", "Z"],
+  "2": ["a", "b", "c"],
+  "3": ["d", "e", "f"],
+  "4": ["g", "h", "i"],
+  "5": ["j", "k", "l"],
+  "6": ["m", "n", "o"],
+  "7": ["p", "q", "r", "s"],
+  "8": ["t", "u", "v"],
+  "9": ["w", "x", "y", "z"],
   "0": [" "]
 };
 
@@ -97,11 +97,19 @@ export function keyboardText() {
     }
   };
 
+    const setText = (newText) => {
+    text.value = newText.split("").map(c => ({
+      char: c,
+      finalized: true
+    }));
+  };
+
   return {
     text,
     displayText,
     selectedKey,
     addKey,
-    resetMultiTap
+    resetMultiTap,
+    setText
   };
 }

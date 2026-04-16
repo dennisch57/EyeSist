@@ -15,21 +15,55 @@
       </span>
     </div>
 
+    <div class="suggestions">
+      <button
+        v-for="word in suggestions"
+        :key="word"
+        class="suggestion-btn"
+        @click="selectSuggestion(word)"
+      >
+        {{ word }}
+      </button>
+    </div>
+
     <p class="char-count">{{ text.length }} characters</p>
   </div>
 </template>
 
 <script setup>
-import { keyboardText } from "@/store/keyboardText";
+  import { computed } from "vue";
+  import { keyboardText } from "@/store/keyboardText";
+  import { dictionary } from "@/store/dictionary";
 
-const { text, displayText } = keyboardText();
+  const { text, displayText, setText } = keyboardText();
 
-const speakText = () => {
-  if (!text.value) return;
+  const currentWord = computed(() => {
+    const words = displayText.value.split(" ");
+    return words[words.length - 1]
+  });
 
-  const speech = new SpeechSynthesisUtterance(displayText.value);
-  window.speechSynthesis.speak(speech);
-};
+  const suggestions = computed(() => {
+    if (!currentWord.value || currentWord.value.length < 2) return [];
+
+    return dictionary
+      .filter(word => word.startsWith(currentWord.value))
+      .slice(0, 3);
+  });
+
+  const selectSuggestion = (word) => {
+    const words = displayText.value.split(" ");
+
+    words[words.length - 1] = word;
+
+    setText(words.join(" ") + " ");
+  };
+
+  const speakText = () => {
+    if (!text.value) return;
+
+    const speech = new SpeechSynthesisUtterance(displayText.value);
+    window.speechSynthesis.speak(speech);
+  };
 </script>
 
 <style scoped>
@@ -85,5 +119,27 @@ const speakText = () => {
   border-radius: 8px;
   color: white;
   cursor: pointer;
+}
+
+.suggestions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.suggestion-btn {
+  min-width: 100px;
+  padding: 12px;
+  font-size: 18px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.suggestion-btn:hover {
+  background: #2563eb;
 }
 </style>

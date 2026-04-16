@@ -67,21 +67,21 @@
 
   const qwertyKeys = [
     "1","2","3","4","5","6","7","8","9","0",
-    "Q","W","E","R","T","Y","U","I","O","P",
-    "A","S","D","F","G","H","J","K","L",
-    "Z","X","C","V","B","N","M",",",".","/"
+    "q","w","e","r","t","y","u","i","o","p",
+    "a","s","d","f","g","h","j","k","l",
+    "z","x","c","v","b","n","m",",",".","/"
   ];
 
   const nokiaKeys = [
     { main: "1", sub: "" },
-    { main: "2", sub: "ABC" },
-    { main: "3", sub: "DEF" },
-    { main: "4", sub: "GHI" },
-    { main: "5", sub: "JKL" },
-    { main: "6", sub: "MNO" },
-    { main: "7", sub: "PQRS" },
-    { main: "8", sub: "TUV" },
-    { main: "9", sub: "WXYZ" },
+    { main: "2", sub: "abc" },
+    { main: "3", sub: "def" },
+    { main: "4", sub: "ghi" },
+    { main: "5", sub: "jkl" },
+    { main: "6", sub: "mno" },
+    { main: "7", sub: "pqrs" },
+    { main: "8", sub: "tuv" },
+    { main: "9", sub: "wxyz" },
     { main: "*", sub: "" },
     { main: "0", sub: "␣" },
     { main: "#", sub: "" }

@@ -1,6 +1,6 @@
 import { ref } from "vue";
 
-const direction = ref("CENTER");
+const direction = ref("...");
 
 export function useEyeStore() {
   return { direction };
