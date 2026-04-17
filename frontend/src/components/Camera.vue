@@ -13,6 +13,12 @@
     <button class="btn" @click="startCamera">
       Start Eye Tracking
     </button>
+
+    <button class="calibrate-btn" @click="showCalibration = true">
+      Calibrate
+    </button>
+
+    <CalibrationModal v-if="showCalibration" @close="showCalibration = false" />
   </div>
 </template>
 
