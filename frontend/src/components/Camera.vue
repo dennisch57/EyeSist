@@ -25,8 +25,10 @@
 <script setup>
   import { ref } from "vue";
   import { useEyeStore } from "@/store/eyeStore";
+  import CalibrationModal from './CalibrationModal.vue';
 
   const { direction } = useEyeStore();
+  const showCalibration = ref(false);
 
   const handlePrediction = (dir) => {
     direction.value = dir;

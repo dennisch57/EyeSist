@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from typing import List
 import base64
 import cv2
 import numpy as np
@@ -37,6 +38,25 @@ def read_item(item_id: int, q: str | None = None):
 @app.put("/items/{item_id}")
 def update_item(item_id: int, item: Item):
     return {"item_name": item.name, "item_id": item_id}
+
+@app.post("/calibrate")
+async def calibrate(
+    files: List[UploadFile] = File(...),
+    labels: List[str] = Form(...)
+):
+    data = {}
+
+    for file, label in zip(files, labels):
+        contents = await file.read()
+
+        if label not in data:
+            data[label] = []
+
+        data[label].append(contents)
+
+    print({k: len(v) for k, v in data.items()})
+
+    return {"status": "received"}
 
 @app.post("/predict")
 def predict(frame: Frame):
