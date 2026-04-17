@@ -17,7 +17,7 @@ from runtime_config import get_runtime_device_str
 from training_config import LABELS
 
 app = FastAPI()
-SMOOTHING_WINDOW = 8  # Number of recent frames to use for majority-vote smoothing (tunable)
+SMOOTHING_WINDOW = 10  # Number of recent frames to use for majority-vote smoothing (tunable)
 
 
 @app.on_event("startup")
