@@ -197,7 +197,8 @@ def get_model() -> GazeClassifier:
 
 def load_model(path: str) -> GazeClassifier:
     device = get_runtime_device()
-    state_dict = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device)
+    state_dict = checkpoint["model_state_dict"] if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint else checkpoint
     backbone = resnet50()
     model = GazeClassifier(
         backbone=backbone,
