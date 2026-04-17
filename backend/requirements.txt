@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-multipart
+numpy
+opencv-python
+pillow
+scikit-learn
+torch
+torchvision
+ultralytics
+azure-identity
+azure-storage-blob
