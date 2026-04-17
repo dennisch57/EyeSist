@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, WebSocket
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
@@ -57,6 +57,33 @@ async def calibrate(
     print({k: len(v) for k, v in data.items()})
 
     return {"status": "received"}
+
+@app.websocket("/ws/predict")
+async def websocket_predict(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+
+            # remove prefix if exists
+            if "," in data:
+                data = data.split(",")[1]
+
+            img_bytes = base64.b64decode(data)
+
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            # TODO: replace with your ML model
+            prediction = random.choice(["left", "right", "up", "down", "closed", "open"])  # dummy
+
+            await websocket.send_json({
+                "direction": prediction
+            })
+
+    except Exception as e:
+        print("WebSocket closed:", e)
 
 @app.post("/predict")
 def predict(frame: Frame):

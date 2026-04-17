@@ -26,6 +26,7 @@
   import { ref } from "vue";
   import { useEyeStore } from "@/store/eyeStore";
   import CalibrationModal from './CalibrationModal.vue';
+  import { onMounted, onUnmounted } from "vue";
 
   const { direction } = useEyeStore();
   const showCalibration = ref(false);
@@ -36,6 +37,9 @@
 
   const videoRef = ref(null);
   const isActive = ref(false);
+
+  let interval = null;
+  let socket = null;
 
   const startCamera = async () => {
     try {
@@ -56,7 +60,24 @@
     }
   };
 
-  let interval = null;
+  const connectWebSocket = () => {
+    socket = new WebSocket("ws://localhost:8000/ws/predict");
+
+    socket.onopen = () => {
+      console.log("WebSocket connected");
+    };
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+
+      // update UI
+      handlePrediction(data.direction);
+    };
+
+    socket.onclose = () => {
+      console.log("WebSocket disconnected");
+    };
+  };
 
   const sendFrame = () => {
     const canvas = document.createElement("canvas");
@@ -72,7 +93,7 @@
 
     const base64 = canvas.toDataURL("image/jpeg");
 
-    sendToBackend(base64);
+    socket.send(base64);
   };
 
   const startStreaming = () => {
@@ -111,6 +132,14 @@
       console.error(err);
     }
   };
+
+  onMounted(() => {
+    connectWebSocket();
+  });
+
+  onUnmounted(() => {
+    if (socket) socket.close();
+  });
 
 </script>
 
