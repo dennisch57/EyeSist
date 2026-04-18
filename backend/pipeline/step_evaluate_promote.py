@@ -14,10 +14,6 @@ Test set: local TEST_DIR + cumulative user sessions with split='test' from manif
 
 import io
 import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from datetime import datetime, timezone
 
 import torch

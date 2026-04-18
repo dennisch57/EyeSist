@@ -13,10 +13,6 @@ Can also be run standalone: python step_train_base_model.py --session-ids sid1 s
 import copy
 import io
 import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from datetime import datetime, timezone
 
 import torch
