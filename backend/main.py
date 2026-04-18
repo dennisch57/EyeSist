@@ -1,4 +1,5 @@
 from collections import Counter, OrderedDict, deque
+import asyncio
 import base64
 import json
 import os
@@ -113,7 +114,7 @@ def reset_local_label_capture_state(session_id: str, label: str) -> None:
     shutil.rmtree(label_temp_dir(session_id, label), ignore_errors=True)
 
 
-def save_local_calibration_crop(session_id: str, label: str, jpeg_bytes: bytes, index: int) -> str:
+def _write_local_calibration_crop(session_id: str, label: str, jpeg_bytes: bytes, index: int) -> str:
     """Persist one locally staged calibration crop for a session/label."""
     label_dir = label_temp_dir(session_id, label)
     os.makedirs(label_dir, exist_ok=True)
@@ -121,6 +122,11 @@ def save_local_calibration_crop(session_id: str, label: str, jpeg_bytes: bytes, 
     with open(file_path, "wb") as file_obj:
         file_obj.write(jpeg_bytes)
     return file_path
+
+
+async def save_local_calibration_crop(session_id: str, label: str, jpeg_bytes: bytes, index: int) -> str:
+    """Persist one locally staged calibration crop without blocking the event loop."""
+    return await asyncio.to_thread(_write_local_calibration_crop, session_id, label, jpeg_bytes, index)
 
 
 def pick_eye_crops(img_bgr: np.ndarray) -> list[np.ndarray]:
@@ -238,8 +244,6 @@ async def websocket_predict(websocket: WebSocket):
     await websocket.accept()
     session_id: str | None = None
     gaze_history: deque[list[str]] = deque(maxlen=SMOOTHING_WINDOW)
-    session_id: str | None = None
-    gaze_history: deque[list[str]] = deque(maxlen=SMOOTHING_WINDOW)
 
     try:
         while True:
@@ -347,7 +351,7 @@ async def websocket_calibrate(websocket: WebSocket):
                 ok, jpeg = cv2.imencode(".jpg", crop_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
                 if not ok:
                     continue
-                save_local_calibration_crop(session_id, label, jpeg.tobytes(), captured_count)
+                await save_local_calibration_crop(session_id, label, jpeg.tobytes(), captured_count)
                 captured_count += 1
                 saved_any = True
 

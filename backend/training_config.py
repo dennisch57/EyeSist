@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 
-DATA_DIR = "./calibration_data"
+DATA_DIR = "./dataset"
 TRAIN_DIR = f"{DATA_DIR}/train"
 VAL_DIR = f"{DATA_DIR}/val"
 TEST_DIR = f"{DATA_DIR}/test"

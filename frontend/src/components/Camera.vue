@@ -3,18 +3,7 @@
     <p class="title">Camera Preview</p>
 
     <div ref="cameraBoxRef" class="camera-box">
-    <div ref="cameraBoxRef" class="camera-box">
       <video ref="videoRef" autoplay playsinline></video>
-
-      <!-- TODO: Remove bbox overlay after YOLO detection testing is complete. -->
-      <div v-if="isActive" class="bbox-layer">
-        <div
-          v-for="(box, index) in boxes"
-          :key="index"
-          class="bbox"
-          :style="getBoxStyle(box)"
-        ></div>
-      </div>
 
       <!-- TODO: Remove bbox overlay after YOLO detection testing is complete. -->
       <div v-if="isActive" class="bbox-layer">
@@ -144,21 +133,7 @@ const connectWebSocket = () => {
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log("Backend response:", data);
 
-      if (typeof data.gaze === "string") {
-        handlePrediction(data.gaze);
-      }
-
-      boxes.value = Array.isArray(data.boxes) ? data.boxes : [];
-      if (data.frame_size?.width && data.frame_size?.height) {
-        frameSize.value = data.frame_size;
-      }
-
-      awaitingResponse = false;
-      if (isActive.value) {
-        sendFrame();
-      }
       if (typeof data.gaze === "string") {
         handlePrediction(data.gaze);
       }
@@ -351,4 +326,3 @@ video {
   cursor: not-allowed;
 }
 </style>
-

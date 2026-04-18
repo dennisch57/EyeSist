@@ -7,9 +7,9 @@ Azure storage layout:
   models/backbone/candidate/ethxgaze_candidate_{timestamp}.pth  ← temporary, always deleted after eval
   models/backbone/promoted/ethxgaze_v{N}_{timestamp}.pth        ← permanent versioned history
   models/backbone/ethxgaze_backbone.pth                         ← production (always latest promoted)
-  models/backbone/version.json                                  ← {version, promoted_blob, timestamp}
+  models/backbone/version.json                                  ← latest approved + current production metadata
 
-Test set: original TEST_DIR + cumulative user sessions with split='test' from manifest.
+Test set: local TEST_DIR + cumulative user sessions with split='test' from manifest.
 """
 
 import io
@@ -35,7 +35,6 @@ from azure_storage import (
     load_model_version,
     save_last_retrain_info,
     save_model_version,
-    upload_backbone,
     upload_bytes,
     upload_json,
 )
@@ -43,6 +42,7 @@ from model import GazeClassifier, _ResizeWithPad
 from runtime_config import get_runtime_device
 from training_config import (
     BATCH_SIZE,
+    DATA_DIR,
     IMG_SIZE,
     LABELS,
     NUM_CLASSES,
@@ -101,12 +101,22 @@ def _download_user_test_images() -> list[tuple[bytes, int]]:
     return samples
 
 
+def _ensure_local_test_dir() -> None:
+    if os.path.isdir(TEST_DIR):
+        return
+
+    dataset_path = os.path.abspath(DATA_DIR)
+    print(f"Local dataset not found. Please download dataset in {dataset_path} locally")
+    raise FileNotFoundError(f"Local dataset not found. Expected directory: {TEST_DIR}")
+
+
 def _build_test_loader(user_samples: list[tuple[bytes, int]]) -> DataLoader:
     eval_tf = transforms.Compose([
         _ResizeWithPad(IMG_SIZE, fill=0),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
+    _ensure_local_test_dir()
     original_test = datasets.ImageFolder(TEST_DIR, transform=eval_tf)
 
     if user_samples:
@@ -215,7 +225,7 @@ def evaluate_and_promote(candidate_blob: str, candidate_val_accuracy: float) -> 
     if promoted:
         # Increment version and write to permanent versioned path
         version_info = load_model_version()
-        next_version = version_info["version"] + 1
+        next_version = version_info["latest_version"] + 1
         promoted_blob = f"models/backbone/promoted/ethxgaze_v{next_version}_{timestamp}.pth"
 
         print(
@@ -224,15 +234,16 @@ def evaluate_and_promote(candidate_blob: str, candidate_val_accuracy: float) -> 
         )
 
         upload_bytes(promoted_blob, candidate_bytes)          # versioned permanent copy
-        upload_backbone(candidate_bytes)                      # overwrite production blob
         save_model_version({
-            "version": next_version,
-            "promoted_blob": promoted_blob,
-            "timestamp": timestamp,
-            "candidate_test_acc": candidate_test_acc,
-            "production_test_acc": production_test_acc,
+            "latest_version": next_version,
+            "latest_promoted_blob": promoted_blob,
+            "latest_promoted_timestamp": timestamp,
+            "latest_candidate_test_acc": candidate_test_acc,
+            "latest_production_test_acc": production_test_acc,
+            "production_blob": version_info.get("production_blob", "models/backbone/ethxgaze_backbone.pth"),
+            "production_version": version_info.get("production_version"),
         })
-        print(f"Production backbone updated → {promoted_blob}")
+        print(f"Candidate approved for manual rollout → {promoted_blob}")
 
         # Record retrain baseline so check_retrain counts only NEW sessions next run
         manifest = load_manifest()
@@ -243,12 +254,6 @@ def evaluate_and_promote(candidate_blob: str, candidate_val_accuracy: float) -> 
             "num_train_samples": sum(e.get("num_samples", 0) for e in train_entries),
         })
 
-        # Clear in-process singleton so FastAPI reloads on next request
-        try:
-            import model as _model_module
-            _model_module._model = None
-        except Exception:
-            pass
     else:
         print(
             f"Candidate NOT promoted — not enough improvement "

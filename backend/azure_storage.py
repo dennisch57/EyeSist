@@ -201,12 +201,29 @@ def delete_session_images(session_id: str) -> None:
 
 
 def load_model_version() -> dict:
-    """Return current model version info, or defaults if no version exists yet."""
+    """Return normalized model version info, with backward compatibility for old schema."""
     try:
         print("Loading current model version info from Azure…")
-        return download_json(MODEL_VERSION_BLOB)
+        info = download_json(MODEL_VERSION_BLOB)
+        return {
+            "latest_version": info.get("version", 0),
+            "latest_promoted_blob": info.get("promoted_blob"),
+            "latest_promoted_timestamp": info.get("timestamp"),
+            "latest_candidate_test_acc": info.get("candidate_test_acc"),
+            "latest_production_test_acc": info.get("production_test_acc"),
+            "production_blob": BACKBONE_BLOB,
+            "production_version": None,
+        }
     except Exception:
-        return {"version": 0, "promoted_blob": None, "timestamp": None}
+        return {
+            "latest_version": 0,
+            "latest_promoted_blob": None,
+            "latest_promoted_timestamp": None,
+            "latest_candidate_test_acc": None,
+            "latest_production_test_acc": None,
+            "production_blob": BACKBONE_BLOB,
+            "production_version": None,
+        }
 
 
 def save_model_version(info: dict) -> None:

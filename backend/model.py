@@ -11,7 +11,7 @@ from training_config import LABELS, NUM_CLASSES, RETRAIN_EXPERIMENT_CONFIG
 CLASS_TO_IDX = {c: i for i, c in enumerate(LABELS)}
 IDX_TO_CLASS = {i: c for i, c in enumerate(LABELS)}
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "model", "ethxgaze_backbone_20260415121958.pth")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "model", "ethxgaze_backbone.pth")
 
 
 # ── ETH-XGaze ResNet-50 (forward() returns 2048-d features, fc never called) ──

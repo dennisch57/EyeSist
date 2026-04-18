@@ -2,8 +2,8 @@
 Retrain the EyeSist GazeClassifier starting from the current production model.
 
 Starting weights : production model (ethxgaze_backbone.pth on Azure) — NOT epoch_24_ckpt.pth.tar.
-Train set        : original TRAIN_DIR  +  Azure user sessions in train_session_ids.
-Val set          : original VAL_DIR only (user sessions never go into val).
+Train set        : local TRAIN_DIR      +  Azure user sessions in train_session_ids.
+Val set          : local VAL_DIR        +  Azure user sessions in val_session_ids.
 Output           : candidate .pth uploaded to Azure; returns {candidate_blob, val_accuracy, ...}.
 
 Designed to run as a ClearML pipeline component (Task already initialised by the pipeline).
@@ -36,6 +36,7 @@ from model import GazeClassifier, _ResizeWithPad
 from runtime_config import get_runtime_device
 from training_config import (
     BATCH_SIZE,
+    DATA_DIR,
     IMG_SIZE,
     LABELS,
     NUM_CLASSES,
@@ -109,14 +110,25 @@ def _build_transforms(img_size: int = IMG_SIZE):
     return train_tf, eval_tf
 
 
+def _ensure_local_dataset_dirs(*paths: str) -> None:
+    missing_paths = [path for path in paths if not os.path.isdir(path)]
+    if not missing_paths:
+        return
+
+    dataset_path = os.path.abspath(DATA_DIR)
+    print(f"Local dataset not found. Please download dataset in {dataset_path} locally")
+    raise FileNotFoundError(f"Local dataset not found. Expected directories: {missing_paths}")
+
+
 def _build_dataloaders(
     user_train_samples: list[tuple[bytes, int]],
     user_val_samples: list[tuple[bytes, int]],
 ):
     train_tf, eval_tf = _build_transforms()
+    _ensure_local_dataset_dirs(TRAIN_DIR, VAL_DIR)
 
     original_train = datasets.ImageFolder(TRAIN_DIR, transform=train_tf)
-    original_val   = datasets.ImageFolder(VAL_DIR,   transform=eval_tf)
+    original_val = datasets.ImageFolder(VAL_DIR, transform=eval_tf)
 
     # Train: original + user train sessions
     if user_train_samples:
