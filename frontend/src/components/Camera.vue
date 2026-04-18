@@ -15,16 +15,6 @@
         ></div>
       </div>
 
-      <!-- TODO: Remove bbox overlay after YOLO detection testing is complete. -->
-      <div v-if="isActive" class="bbox-layer">
-        <div
-          v-for="(box, index) in boxes"
-          :key="index"
-          class="bbox"
-          :style="getBoxStyle(box)"
-        ></div>
-      </div>
-
       <div v-if="!isActive" class="overlay">
         <p>Start tracking to see video</p>
       </div>
@@ -143,21 +133,7 @@ const connectWebSocket = () => {
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log("Backend response:", data);
 
-      if (typeof data.gaze === "string") {
-        handlePrediction(data.gaze);
-      }
-
-      boxes.value = Array.isArray(data.boxes) ? data.boxes : [];
-      if (data.frame_size?.width && data.frame_size?.height) {
-        frameSize.value = data.frame_size;
-      }
-
-      awaitingResponse = false;
-      if (isActive.value) {
-        sendFrame();
-      }
       if (typeof data.gaze === "string") {
         handlePrediction(data.gaze);
       }
@@ -350,4 +326,3 @@ video {
   cursor: not-allowed;
 }
 </style>
-

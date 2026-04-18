@@ -27,6 +27,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
 from clearml import Task
 from clearml.automation import PipelineDecorator
 
@@ -101,7 +105,7 @@ def component_evaluate_promote(
     name=PIPELINE_NAME,
     project=CLEARML_PROJECT,
     version="1.0",
-    default_execution_queue=EXECUTION_QUEUE,
+    pipeline_execution_queue=EXECUTION_QUEUE,
     add_pipeline_tags=True,
 )
 def retrain_pipeline() -> dict:
@@ -131,16 +135,51 @@ def register_schedule(cron: str = WEEKLY_CRON) -> None:
     """
     from clearml.automation.scheduler import TaskScheduler
 
+    parts = cron.split()
+    if len(parts) != 5:
+        raise ValueError(f"Expected 5-field cron expression, got: '{cron}'")
+
+    minute_s, hour_s, day_s, month_s, weekday_s = parts
+    if day_s != "*" or month_s != "*":
+        raise ValueError(
+            "This ClearML scheduler wrapper only supports weekly cron expressions "
+            "with '*' for day-of-month and month."
+        )
+
+    try:
+        minute = int(minute_s)
+        hour = int(hour_s)
+    except ValueError as exc:
+        raise ValueError(f"Invalid cron minute/hour in '{cron}'") from exc
+
+    weekday_map = {
+        "0": "sunday",
+        "1": "monday",
+        "2": "tuesday",
+        "3": "wednesday",
+        "4": "thursday",
+        "5": "friday",
+        "6": "saturday",
+        "7": "sunday",
+    }
+    weekdays = [weekday_map.get(token.strip()) for token in weekday_s.split(",")]
+    if any(day is None for day in weekdays):
+        raise ValueError(
+            "Unsupported cron weekday field. Use comma-separated numeric weekdays "
+            "like '1' for Monday."
+        )
+
     print(f"Registering weekly pipeline schedule (cron: '{cron}')")
     scheduler = TaskScheduler(
         sync_frequency_minutes=60,
-        pooling_frequency_minutes=5,
     )
     scheduler.add_task(
         schedule_function=retrain_pipeline,
         queue=EXECUTION_QUEUE,
         name=f"{PIPELINE_NAME} — Weekly",
-        cron=cron,
+        minute=minute,
+        hour=hour,
+        weekdays=weekdays,
         target_project=CLEARML_PROJECT,
     )
     scheduler.start_remotely()
