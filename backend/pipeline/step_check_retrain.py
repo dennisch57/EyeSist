@@ -10,7 +10,7 @@ The pipeline controller exits early if should_retrain is False.
 """
 
 from azure_storage import load_manifest, load_last_retrain_info
-from training_config import RETRAIN_NEW_SESSIONS_THRESHOLD, RETRAIN_NEW_SAMPLES_THRESHOLD
+from training_config import RETRAIN_NEW_SAMPLES_THRESHOLD
 
 
 def check_retrain_needed() -> tuple[bool, list[str], list[str]]:

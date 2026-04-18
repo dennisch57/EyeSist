@@ -48,11 +48,14 @@ WEEKLY_CRON = "0 2 * * 1"  # 2am UTC every Monday
     return_values=["should_retrain", "train_session_ids", "val_session_ids"],
     task_type=Task.TaskTypes.data_processing,
     execution_queue=EXECUTION_QUEUE,
-    packages=["azure-identity", "azure-storage-blob"],
+    packages=["azure-identity", "azure-storage-blob", "python-dotenv"],
+    working_dir="backend",
 )
 def component_check_retrain() -> tuple[bool, list, list]:
     import os, sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.getcwd())
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.getcwd(), ".env"))
     from pipeline.step_check_retrain import check_retrain_needed
     return check_retrain_needed()
 
@@ -64,14 +67,17 @@ def component_check_retrain() -> tuple[bool, list, list]:
     execution_queue=EXECUTION_QUEUE,
     packages=[
         "azure-identity", "azure-storage-blob",
-        "torch", "torchvision", "pillow", "numpy", "scikit-learn",
+        "torch", "torchvision", "pillow", "numpy", "scikit-learn", "python-dotenv",
     ],
+    working_dir="backend",
 )
 def component_train_model(
     train_session_ids: list, val_session_ids: list
 ) -> tuple[str, float]:
     import os, sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.getcwd())
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.getcwd(), ".env"))
     from pipeline.step_train_base_model import run_training
     result = run_training(
         train_session_ids=train_session_ids,
@@ -87,14 +93,17 @@ def component_train_model(
     execution_queue=EXECUTION_QUEUE,
     packages=[
         "azure-identity", "azure-storage-blob",
-        "torch", "torchvision", "pillow", "numpy",
+        "torch", "torchvision", "pillow", "numpy", "python-dotenv",
     ],
+    working_dir="backend",
 )
 def component_evaluate_promote(
     candidate_blob: str, candidate_val_accuracy: float
 ) -> tuple[bool, float]:
     import os, sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.getcwd())
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.getcwd(), ".env"))
     from pipeline.step_evaluate_promote import evaluate_and_promote
     result = evaluate_and_promote(candidate_blob, candidate_val_accuracy)
     return result["promoted"], result["candidate_test_acc"]
@@ -108,6 +117,7 @@ def component_evaluate_promote(
     version="1.0",
     pipeline_execution_queue=CONTROLLER_QUEUE,
     add_pipeline_tags=True,
+    working_dir="backend",
 )
 def retrain_pipeline() -> dict:
     should_retrain, train_ids, val_ids = component_check_retrain()
