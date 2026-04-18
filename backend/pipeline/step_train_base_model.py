@@ -33,7 +33,7 @@ from azure_storage import (
     upload_bytes,
 )
 from model import GazeClassifier, _ResizeWithPad
-from runtime_config import get_runtime_device
+from runtime_config import get_runtime_device, get_runtime_device_str
 from training_config import (
     BATCH_SIZE,
     DATA_DIR,
@@ -304,6 +304,7 @@ def run_training(train_session_ids: list[str], val_session_ids: list[str]) -> di
     seed_everything()
     cfg = RETRAIN_EXPERIMENT_CONFIG
     device = get_runtime_device()
+    print(f"Training step running on device: {get_runtime_device_str()}")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
     from clearml import Task

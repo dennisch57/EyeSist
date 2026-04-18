@@ -39,7 +39,7 @@ from azure_storage import (
     upload_json,
 )
 from model import GazeClassifier, _ResizeWithPad
-from runtime_config import get_runtime_device
+from runtime_config import get_runtime_device, get_runtime_device_str
 from training_config import (
     BATCH_SIZE,
     DATA_DIR,
@@ -182,6 +182,7 @@ def evaluate_and_promote(candidate_blob: str, candidate_val_accuracy: float) -> 
         {promoted, candidate_test_acc, production_test_acc, timestamp}
     """
     device = get_runtime_device()
+    print(f"Evaluation step running on device: {get_runtime_device_str()}")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
     from clearml import Task

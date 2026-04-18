@@ -36,6 +36,7 @@ from clearml.automation import PipelineDecorator
 
 CLEARML_PROJECT = "EyeSist"
 PIPELINE_NAME = "Base Model Retrain"
+CONTROLLER_QUEUE = "services"
 EXECUTION_QUEUE = "default"
 WEEKLY_CRON = "0 2 * * 1"  # 2am UTC every Monday
 
@@ -105,7 +106,7 @@ def component_evaluate_promote(
     name=PIPELINE_NAME,
     project=CLEARML_PROJECT,
     version="1.0",
-    pipeline_execution_queue=EXECUTION_QUEUE,
+    pipeline_execution_queue=CONTROLLER_QUEUE,
     add_pipeline_tags=True,
 )
 def retrain_pipeline() -> dict:
@@ -175,12 +176,13 @@ def register_schedule(cron: str = WEEKLY_CRON) -> None:
     )
     scheduler.add_task(
         schedule_function=retrain_pipeline,
-        queue=EXECUTION_QUEUE,
+        queue=CONTROLLER_QUEUE,
         name=f"{PIPELINE_NAME} — Weekly",
         minute=minute,
         hour=hour,
         weekdays=weekdays,
         target_project=CLEARML_PROJECT,
+        execute_immediately=True,
     )
     scheduler.start_remotely()
     print("Scheduler registered as a ClearML service task.")
