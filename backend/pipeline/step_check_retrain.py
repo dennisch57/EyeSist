@@ -1,44 +1,55 @@
-import random
-from azure_storage import list_all_session_metas, download_session_meta
+"""
+Volume-based retrain gate.
 
-RETRAIN_THRESHOLD = 0.5  # Trigger retrain if 2+ sessions have accuracy < 50%
+Reads the dataset manifest and compares current train pool size against
+the snapshot recorded at the last retrain. Triggers if new train sessions
+OR new train samples exceed their thresholds.
+
+Returns (should_retrain, train_session_ids, val_session_ids).
+The pipeline controller exits early if should_retrain is False.
+"""
+
+from azure_storage import load_manifest, load_last_retrain_info
+from training_config import RETRAIN_NEW_SESSIONS_THRESHOLD, RETRAIN_NEW_SAMPLES_THRESHOLD
 
 
-def check_retrain_needed() -> bool:
+def check_retrain_needed() -> tuple[bool, list[str], list[str]]:
     """
-    Check if retraining is triggered. Condition: 2+ sessions with accuracy < 50%.
-    Assigns train/test split to unassigned sessions (permanent once set).
+    Returns (should_retrain, train_session_ids, val_session_ids).
+
+    should_retrain is True when the training pool has grown by at least 
+    RETRAIN_NEW_SAMPLES_THRESHOLD
+    samples since the last completed retrain.
     """
-    metas = list_all_session_metas()
+    manifest = load_manifest()
+    last = load_last_retrain_info()
 
-    # Filter to sessions without an assigned split
-    unassigned = [m for m in metas if m.get("split") is None]
+    train_entries = [e for e in manifest if e.get("split") == "train"]
+    val_entries   = [e for e in manifest if e.get("split") == "val"]
 
-    # Count sessions below threshold
-    below_threshold = sum(1 for m in unassigned if m.get("accuracy", 1.0) < RETRAIN_THRESHOLD)
+    current_train_sessions = len(train_entries)
+    current_train_samples  = sum(e.get("num_samples", 0) for e in train_entries)
 
-    print(f"Sessions checked: {len(unassigned)}")
-    print(f"Below {RETRAIN_THRESHOLD*100:.0f}% threshold: {below_threshold}")
+    prev_train_sessions = last.get("num_train_sessions", 0)
+    prev_train_samples  = last.get("num_train_samples", 0)
 
-    if below_threshold >= 2:
-        print("✓ RETRAIN TRIGGERED")
-        assign_train_test_splits(unassigned)
-        return True
+    new_sessions = current_train_sessions - prev_train_sessions
+    new_samples  = current_train_samples  - prev_train_samples
 
-    print("✗ No retrain (< 2 sessions below threshold)")
-    return False
+    print(f"Train pool : {current_train_sessions} sessions / {current_train_samples} samples")
+    print(f"Since last retrain: +{new_sessions} sessions / +{new_samples} samples")
+    print(f"Thresholds : {RETRAIN_NEW_SAMPLES_THRESHOLD} samples")
 
+    should_retrain = (
+        new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD
+    )
 
-def assign_train_test_splits(sessions: list[dict], train_ratio: float = 0.8) -> None:
-    """
-    Randomly assign train/test split to sessions. Permanently update meta.json.
-    """
-    n_train = max(1, int(len(sessions) * train_ratio))
-    train_indices = set(random.sample(range(len(sessions)), n_train))
+    if not should_retrain:
+        print("Volume threshold not met — skipping retrain.")
+        return False, [], []
 
-    for i, meta in enumerate(sessions):
-        split = "train" if i in train_indices else "test"
-        meta["split"] = split
-        # Update in Azure (reconstruct blob path from meta keys if needed)
-        # For now, just log — actual update happens in retrain pipeline step
-        print(f"  Assigned session {meta.get('session_id', i)}: {split}")
+    train_ids = [e["session_id"] for e in train_entries]
+    val_ids   = [e["session_id"] for e in val_entries]
+
+    print(f"Retrain triggered: {len(train_ids)} train, {len(val_ids)} val sessions")
+    return True, train_ids, val_ids
