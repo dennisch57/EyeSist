@@ -14,6 +14,9 @@ CONTAINER = "eyesist"
 # Blob path constants
 BACKBONE_BLOB = "models/backbone/ethxgaze_backbone.pth"
 YOLO_BLOB = "models/yolo/yolo_eye.pt"
+MANIFEST_BLOB = "dataset/manifest.json"
+LAST_RETRAIN_BLOB = "dataset/last_retrain.json"
+MODEL_VERSION_BLOB = "models/backbone/version.json"
 
 
 @lru_cache(maxsize=1)
@@ -94,13 +97,76 @@ def download_session_meta(session_id: str) -> dict:
     return download_json(f"calibration-data/{session_id}/meta.json")
 
 
+def load_manifest() -> list[dict]:
+    """Return the full dataset manifest, or [] if it doesn't exist yet."""
+    try:
+        return download_json(MANIFEST_BLOB)
+    except Exception:
+        return []
+
+
+def append_to_manifest(entry: dict) -> None:
+    """Append one session entry to the manifest. Thread-unsafe — fine for sequential ingestion."""
+    manifest = load_manifest()
+    manifest.append(entry)
+    upload_json(MANIFEST_BLOB, manifest)
+
+
+def load_last_retrain_info() -> dict:
+    """Return info about the last completed retrain, or defaults if none yet."""
+    try:
+        return download_json(LAST_RETRAIN_BLOB)
+    except Exception:
+        return {"timestamp": None, "num_train_sessions": 0, "num_train_samples": 0}
+
+
+def save_last_retrain_info(info: dict) -> None:
+    upload_json(LAST_RETRAIN_BLOB, info)
+
+
+def update_session_meta(session_id: str, updates: dict) -> None:
+    """Patch an existing session meta.json with the given fields."""
+    meta = download_session_meta(session_id)
+    meta.update(updates)
+    upload_session_meta(session_id, meta)
+
+
+def upload_backbone(data: bytes) -> None:
+    """Overwrite the production backbone checkpoint on Azure."""
+    upload_bytes(BACKBONE_BLOB, data)
+
+
+def download_backbone() -> bytes:
+    return download_bytes(BACKBONE_BLOB)
+
+
+def delete_blob(blob_path: str) -> None:
+    blob = _client().get_blob_client(container=CONTAINER, blob=blob_path)
+    blob.delete_blob()
+
+
+def load_model_version() -> dict:
+    """Return current model version info, or defaults if no version exists yet."""
+    try:
+        return download_json(MODEL_VERSION_BLOB)
+    except Exception:
+        return {"version": 0, "promoted_blob": None, "timestamp": None}
+
+
+def save_model_version(info: dict) -> None:
+    upload_json(MODEL_VERSION_BLOB, info)
+
+
 def list_all_session_metas() -> list[dict]:
-    """Return all session meta.json contents."""
+    """Return all session meta.json contents, with session_id injected from blob path."""
     metas = []
     for blob_path in list_blobs("calibration-data/"):
         if blob_path.endswith("/meta.json"):
             try:
-                metas.append(download_json(blob_path))
+                meta = download_json(blob_path)
+                if "session_id" not in meta:
+                    meta["session_id"] = blob_path.split("/")[1]
+                metas.append(meta)
             except Exception:
                 pass
     return metas

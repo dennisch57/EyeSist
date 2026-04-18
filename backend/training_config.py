@@ -17,6 +17,12 @@ NUM_WORKERS = 4
 LABELS = ['closed', 'down', 'left', 'right', 'straight', 'up']
 NUM_CLASSES = len(LABELS)
 
+# Dataset manifest split targets (user sessions only; original dataset split is fixed)
+SPLIT_TARGETS = {"train": 0.70, "val": 0.15, "test": 0.15}
+
+# Volume-based retrain trigger thresholds
+RETRAIN_NEW_SAMPLES_THRESHOLD = 5000   # trigger if 5000+ new train samples since last retrain
+
 RETRAIN_EXPERIMENT_CONFIG = {
     "name": "ethxgaze_head",
     "phase1_epochs": 15,
