@@ -3,7 +3,18 @@
     <p class="title">Camera Preview</p>
 
     <div ref="cameraBoxRef" class="camera-box">
+    <div ref="cameraBoxRef" class="camera-box">
       <video ref="videoRef" autoplay playsinline></video>
+
+      <!-- TODO: Remove bbox overlay after YOLO detection testing is complete. -->
+      <div v-if="isActive" class="bbox-layer">
+        <div
+          v-for="(box, index) in boxes"
+          :key="index"
+          class="bbox"
+          :style="getBoxStyle(box)"
+        ></div>
+      </div>
 
       <!-- TODO: Remove bbox overlay after YOLO detection testing is complete. -->
       <div v-if="isActive" class="bbox-layer">
@@ -133,7 +144,21 @@ const connectWebSocket = () => {
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
+      console.log("Backend response:", data);
 
+      if (typeof data.gaze === "string") {
+        handlePrediction(data.gaze);
+      }
+
+      boxes.value = Array.isArray(data.boxes) ? data.boxes : [];
+      if (data.frame_size?.width && data.frame_size?.height) {
+        frameSize.value = data.frame_size;
+      }
+
+      awaitingResponse = false;
+      if (isActive.value) {
+        sendFrame();
+      }
       if (typeof data.gaze === "string") {
         handlePrediction(data.gaze);
       }
@@ -271,6 +296,19 @@ video {
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.5);
 }
 
+.bbox-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bbox {
+  position: absolute;
+  border: 2px solid #22c55e;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.5);
+}
+
 .overlay {
   position: absolute;
   inset: 0;
@@ -313,3 +351,4 @@ video {
   cursor: not-allowed;
 }
 </style>
+

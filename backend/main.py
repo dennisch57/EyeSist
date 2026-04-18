@@ -50,10 +50,12 @@ app.add_middleware(
 )
 
 
+
 class Item(BaseModel):
     name: str
     price: float
     is_offer: bool | None = None
+
 
 
 class Frame(BaseModel):
@@ -234,6 +236,8 @@ def update_item(item_id: int, item: Item):
 async def websocket_predict(websocket: WebSocket):
     """Stream prediction frames over WebSocket with optional session personalization."""
     await websocket.accept()
+    session_id: str | None = None
+    gaze_history: deque[list[str]] = deque(maxlen=SMOOTHING_WINDOW)
     session_id: str | None = None
     gaze_history: deque[list[str]] = deque(maxlen=SMOOTHING_WINDOW)
 
