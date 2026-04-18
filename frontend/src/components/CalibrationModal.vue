@@ -223,7 +223,7 @@ const finishCalibration = async () => {
   statusMessage.value = "Training personalized model...";
 
   try {
-    const response = await fetch("http://localhost:8000/ws/calibrate", {
+    const response = await fetch("http://localhost:8000/model/calibrate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }),

@@ -364,7 +364,7 @@ async def websocket_calibrate(websocket: WebSocket):
         print("WebSocket /ws/calibrate error:", exc)
 
 
-@app.post("/ws/calibrate")
+@app.post("/model/calibrate")
 def calibrate_v2(req: CalibrateRequest):
     """Finalize calibration from staged local crops and persist the new session model."""
     try:
