@@ -3,7 +3,6 @@
     <p class="title">Camera Preview</p>
 
     <div ref="cameraBoxRef" class="camera-box">
-    <div ref="cameraBoxRef" class="camera-box">
       <video ref="videoRef" autoplay playsinline></video>
 
       <!-- TODO: Remove bbox overlay after YOLO detection testing is complete. -->
