@@ -66,11 +66,11 @@ class _UserSessionDataset(Dataset):
 
 
 def _label_from_blob_name(blob_name: str) -> str | None:
-    filename = blob_name.split("/")[-1]  # e.g. 'left_0003.jpg'
-    for label in LABELS:
-        if filename.startswith(f"{label}_"):
-            return label
-    return None
+    parts = blob_name.split("/")
+    if len(parts) < 2:
+        return None
+    label = parts[-2]
+    return label if label in LABELS else None
 
 
 def _download_sessions(session_ids: list[str]) -> list[tuple[bytes, int]]:

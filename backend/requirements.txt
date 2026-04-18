@@ -11,3 +11,4 @@ ultralytics
 azure-identity
 azure-storage-blob
 clearml
+clearml

@@ -76,7 +76,7 @@ def list_blobs(prefix: str) -> list[str]:
 
 
 def list_session_images(session_id: str) -> list[str]:
-    return list_blobs(f"calibration-data/{session_id}/images/")
+    return sorted(list_blobs(f"calibration-data/{session_id}/images/"))
 
 
 def upload_calibration_images(session_id: str, crops: list[tuple[str, bytes]]) -> None:
@@ -85,8 +85,20 @@ def upload_calibration_images(session_id: str, crops: list[tuple[str, bytes]]) -
     for label, jpeg_bytes in crops:
         idx = label_counts.get(label, 0)
         label_counts[label] = idx + 1
-        blob_path = f"calibration-data/{session_id}/images/{label}_{idx:04d}.jpg"
+        blob_path = f"calibration-data/{session_id}/images/{label}/{idx:04d}.jpg"
         upload_bytes(blob_path, jpeg_bytes, "image/jpeg")
+
+
+def delete_ridge_model(session_id: str) -> None:
+    blob_path = f"calibration-data/{session_id}/ridge_model.pkl"
+    if blob_exists(blob_path):
+        delete_blob(blob_path)
+
+
+def delete_session_meta(session_id: str) -> None:
+    blob_path = f"calibration-data/{session_id}/meta.json"
+    if blob_exists(blob_path):
+        delete_blob(blob_path)
 
 
 def upload_session_meta(session_id: str, meta: dict) -> None:
@@ -109,6 +121,18 @@ def append_to_manifest(entry: dict) -> None:
     """Append one session entry to the manifest. Thread-unsafe — fine for sequential ingestion."""
     manifest = load_manifest()
     manifest.append(entry)
+    upload_json(MANIFEST_BLOB, manifest)
+
+
+def upsert_manifest_entry(entry: dict) -> None:
+    session_id = entry.get("session_id")
+    manifest = [item for item in load_manifest() if item.get("session_id") != session_id]
+    manifest.append(entry)
+    upload_json(MANIFEST_BLOB, manifest)
+
+
+def delete_manifest_entry(session_id: str) -> None:
+    manifest = [item for item in load_manifest() if item.get("session_id") != session_id]
     upload_json(MANIFEST_BLOB, manifest)
 
 
@@ -143,6 +167,29 @@ def download_backbone() -> bytes:
 def delete_blob(blob_path: str) -> None:
     blob = _client().get_blob_client(container=CONTAINER, blob=blob_path)
     blob.delete_blob()
+
+
+def upload_ridge_model(session_id: str, model_bytes: bytes) -> None:
+    upload_bytes(f"calibration-data/{session_id}/ridge_model.pkl", model_bytes)
+
+
+def download_ridge_model(session_id: str) -> bytes:
+    return download_bytes(f"calibration-data/{session_id}/ridge_model.pkl")
+
+
+def ridge_model_exists(session_id: str) -> bool:
+    return blob_exists(f"calibration-data/{session_id}/ridge_model.pkl")
+
+
+def delete_session_images(session_id: str) -> None:
+    """Delete all calibration images for a session (keeps meta and ridge model)."""
+    blobs = list_session_images(session_id)
+    for blob_path in blobs:
+        try:
+            delete_blob(blob_path)
+        except Exception as e:
+            print(f"  Warning: could not delete {blob_path}: {e}")
+    print(f"Deleted {len(blobs)} images for session {session_id[:8]}…")
 
 
 def load_model_version() -> dict:
