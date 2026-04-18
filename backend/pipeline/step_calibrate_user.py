@@ -24,7 +24,7 @@ from model import extract_features, predict_base
 from training_config import BASE_MODEL_GOOD_ACCURACY, LABELS, SPLIT_TARGETS
 
 ALPHA = 1.0
-TEMP_CALIBRATION_DIR = "/tmp/eyesist_calibration"
+TEMP_CALIBRATION_DIR = "./tmp/eyesist_calibration"
 
 
 def _assign_split(manifest: list[dict], num_samples: int) -> str:
@@ -74,6 +74,7 @@ def _log_calibration_to_clearml(session_id: str, metrics: dict, label_counts: di
         logger.report_single_value("base_accuracy", metrics["base_accuracy"])
         logger.report_single_value("ridge_accuracy", metrics["ridge_accuracy"])
         logger.report_single_value("accuracy_gain", metrics["ridge_accuracy"] - metrics["base_accuracy"])
+        print(f"ClearML calibration task created: id={task.id} session={session_id}")
         task.close()
     except Exception as exc:
         print(f"Warning: failed to log calibration to ClearML: {exc}")

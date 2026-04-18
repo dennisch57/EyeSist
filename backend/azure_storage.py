@@ -145,11 +145,13 @@ def load_last_retrain_info() -> dict:
 
 
 def save_last_retrain_info(info: dict) -> None:
+    print(f"Saving last retrain info: {info}")
     upload_json(LAST_RETRAIN_BLOB, info)
 
 
 def update_session_meta(session_id: str, updates: dict) -> None:
     """Patch an existing session meta.json with the given fields."""
+    print(f"Updating meta for session {session_id}: {updates}")
     meta = download_session_meta(session_id)
     meta.update(updates)
     upload_session_meta(session_id, meta)
@@ -157,29 +159,35 @@ def update_session_meta(session_id: str, updates: dict) -> None:
 
 def upload_backbone(data: bytes) -> None:
     """Overwrite the production backbone checkpoint on Azure."""
+    print("Uploading backbone checkpoint to Azure…") 
     upload_bytes(BACKBONE_BLOB, data)
 
 
 def download_backbone() -> bytes:
+    print("Downloading backbone checkpoint from Azure…")
     return download_bytes(BACKBONE_BLOB)
 
 
 def delete_blob(blob_path: str) -> None:
+    print(f"Deleting blob {blob_path}…")
     blob = _client().get_blob_client(container=CONTAINER, blob=blob_path)
     blob.delete_blob()
 
 
 def upload_ridge_model(session_id: str, model_bytes: bytes) -> None:
+    print(f"Uploading ridge model for session {session_id}…")
     upload_bytes(f"calibration-data/{session_id}/ridge_model.pkl", model_bytes)
 
 
 def download_ridge_model(session_id: str) -> bytes:
+    print(f"Downloading ridge model for session {session_id}…")
     return download_bytes(f"calibration-data/{session_id}/ridge_model.pkl")
 
 
 def ridge_model_exists(session_id: str) -> bool:
-    return blob_exists(f"calibration-data/{session_id}/ridge_model.pkl")
-
+    exists =  blob_exists(f"calibration-data/{session_id}/ridge_model.pkl")
+    print(f"Ridge model exists for session {session_id}: {exists}")
+    return exists
 
 def delete_session_images(session_id: str) -> None:
     """Delete all calibration images for a session (keeps meta and ridge model)."""
@@ -195,12 +203,14 @@ def delete_session_images(session_id: str) -> None:
 def load_model_version() -> dict:
     """Return current model version info, or defaults if no version exists yet."""
     try:
+        print("Loading current model version info from Azure…")
         return download_json(MODEL_VERSION_BLOB)
     except Exception:
         return {"version": 0, "promoted_blob": None, "timestamp": None}
 
 
 def save_model_version(info: dict) -> None:
+    print(f"Saving model version info: {info}")
     upload_json(MODEL_VERSION_BLOB, info)
 
 

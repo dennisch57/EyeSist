@@ -37,12 +37,13 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue";
+import { onUnmounted, ref } from "vue";
 import CalibrationModal from "./CalibrationModal.vue";
 import { useEyeStore } from "@/store/eyeStore";
 
 const { direction, ensureSessionId, sessionId } = useEyeStore();
 const showCalibration = ref(false);
+const isConnecting = ref(false);
 
 const handlePrediction = (dir) => {
   direction.value = dir;
@@ -65,58 +66,98 @@ let socket = null;
 let canvas = null;
 let ctx = null;
 let awaitingResponse = false;
+let stream = null;
+
+const waitForVideoReady = async (video) => {
+  if (video.videoWidth > 0 && video.videoHeight > 0) {
+    return;
+  }
+
+  await new Promise((resolve) => {
+    const handleReady = () => {
+      video.removeEventListener("loadedmetadata", handleReady);
+      video.removeEventListener("resize", handleReady);
+      resolve();
+    };
+
+    video.addEventListener("loadedmetadata", handleReady);
+    video.addEventListener("resize", handleReady);
+  });
+};
 
 const startCamera = async () => {
+  if (isConnecting.value || isActive.value) {
+    return;
+  }
+
+  isConnecting.value = true;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { min: 640, ideal: 1920, max: 1920 },
         height: { min: 480, ideal: 1080, max: 1080 },
-        frameRate: { ideal: 30 },
+        frameRate: { ideal: 30, max: 30 },
       },
     });
 
+    await connectWebSocket();
     videoRef.value.srcObject = stream;
-    isActive.value = true;
     await videoRef.value.play();
+    await waitForVideoReady(videoRef.value);
+    isActive.value = true;
     startStreaming();
   } catch (err) {
     console.error("Camera error:", err);
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      stream = null;
+    }
+  } finally {
+    isConnecting.value = false;
   }
 };
 
 const connectWebSocket = () => {
+  if (socket?.readyState === WebSocket.OPEN) {
+    return Promise.resolve();
+  }
+
   socket = new WebSocket("ws://localhost:8000/ws/predict");
   socket.binaryType = "arraybuffer";
 
-  socket.onopen = () => {
-    socket.send(JSON.stringify({ session_id: ensureSessionId() }));
-    if (isActive.value) {
-      startStreaming();
-    }
-  };
+  return new Promise((resolve, reject) => {
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ session_id: ensureSessionId() }));
+      resolve();
+    };
 
-  socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
 
-    if (typeof data.gaze === "string") {
-      handlePrediction(data.gaze);
-    }
+      if (typeof data.gaze === "string") {
+        handlePrediction(data.gaze);
+      }
 
-    boxes.value = Array.isArray(data.boxes) ? data.boxes : [];
-    if (data.frame_size?.width && data.frame_size?.height) {
-      frameSize.value = data.frame_size;
-    }
+      boxes.value = Array.isArray(data.boxes) ? data.boxes : [];
+      if (data.frame_size?.width && data.frame_size?.height) {
+        frameSize.value = data.frame_size;
+      }
 
-    awaitingResponse = false;
-    if (isActive.value) {
-      sendFrame();
-    }
-  };
+      awaitingResponse = false;
+      if (isActive.value) {
+        sendFrame();
+      }
+    };
 
-  socket.onclose = () => {
-    awaitingResponse = false;
-  };
+    socket.onclose = () => {
+      awaitingResponse = false;
+      isActive.value = false;
+    };
+
+    socket.onerror = (error) => {
+      reject(error);
+    };
+  });
 };
 
 const sendFrame = async () => {
@@ -180,14 +221,12 @@ const getBoxStyle = (box) => {
   };
 };
 
-onMounted(() => {
-  ensureSessionId();
-  connectWebSocket();
-});
-
 onUnmounted(() => {
   if (socket) {
     socket.close();
+  }
+  if (stream) {
+    stream.getTracks().forEach((track) => track.stop());
   }
 });
 </script>
@@ -239,5 +278,38 @@ video {
   align-items: center;
   justify-content: center;
   color: #cbd5f5;
+}
+
+.btn,
+.calibrate-btn {
+  margin-top: 12px;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.btn {
+  background: #22c55e;
+  color: #0f172a;
+}
+
+.calibrate-btn {
+  background: #3b82f6;
+  color: white;
+}
+
+.btn:hover,
+.calibrate-btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:disabled,
+.calibrate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

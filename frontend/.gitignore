@@ -28,6 +28,8 @@ coverage
 
 .eslintcache
 
+vue-projeect/*
+
 # Cypress
 /cypress/videos/
 /cypress/screenshots/

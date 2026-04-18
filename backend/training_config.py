@@ -22,7 +22,7 @@ SPLIT_TARGETS = {"train": 0.70, "val": 0.15, "test": 0.15}
 
 # If base model accuracy on a user's crops exceeds this, their images are discarded
 # (base model already handles them well — no diversity value for retraining)
-BASE_MODEL_GOOD_ACCURACY = 0.80
+BASE_MODEL_GOOD_ACCURACY = 0.90
 
 # Volume-based retrain trigger thresholds
 RETRAIN_NEW_SAMPLES_THRESHOLD = 5000   # trigger if 5000+ new train samples since last retrain

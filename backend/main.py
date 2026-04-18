@@ -5,13 +5,17 @@ import os
 import shutil
 from typing import Any
 
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
 import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from azure_storage import download_ridge_model, load_manifest, ridge_model_exists
+from azure_storage import download_ridge_model, ensure_container, load_manifest, ridge_model_exists
 from eye_detector import detect_eyes
 from model import extract_features, predict_base
 from pipeline.step_calibrate_user import (
@@ -30,9 +34,11 @@ RIDGE_CACHE_MAX_SIZE = 64
 RIDGE_MODEL_CACHE: OrderedDict[str, Any] = OrderedDict()
 
 
+
 @app.on_event("startup")
 def log_runtime_device() -> None:
     print(f"EyeSist backend starting on device: {get_runtime_device_str()}")
+    ensure_container()
 
 
 app.add_middleware(
@@ -311,7 +317,11 @@ async def websocket_calibrate(websocket: WebSocket):
                 continue
 
             img_bgr = bytes_to_bgr(frame_bytes)
-            eye_crops = pick_eye_crops(img_bgr)
+            detections = detect_eyes(img_bgr)
+            frame_size = {"width": int(img_bgr.shape[1]), "height": int(img_bgr.shape[0])}
+            boxes = [detection["box"] for detection in detections]
+            eye_crops = [detection["crop"] for detection in detections]
+
             if not eye_crops:
                 await websocket.send_json(
                     {
@@ -321,6 +331,8 @@ async def websocket_calibrate(websocket: WebSocket):
                         "captured_count": captured_count,
                         "target_count": TARGET_CALIBRATION_IMAGES,
                         "reason": "No eye detected",
+                        "boxes": [],
+                        "frame_size": frame_size,
                     }
                 )
                 continue
@@ -344,6 +356,8 @@ async def websocket_calibrate(websocket: WebSocket):
                         "captured_count": captured_count,
                         "target_count": TARGET_CALIBRATION_IMAGES,
                         "reason": "Failed to encode eye crop",
+                        "boxes": boxes,
+                        "frame_size": frame_size,
                     }
                 )
                 continue
@@ -355,6 +369,8 @@ async def websocket_calibrate(websocket: WebSocket):
                     "label": label,
                     "captured_count": captured_count,
                     "target_count": TARGET_CALIBRATION_IMAGES,
+                    "boxes": boxes,
+                    "frame_size": frame_size,
                 }
             )
     except WebSocketDisconnect:
@@ -382,7 +398,8 @@ def calibrate_v2(req: CalibrateRequest):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        cleanup_local_calibration_data(req.session_id)
+        print(f"Cleaning up local calibration data for session %s", req.session_id)
+        # cleanup_local_calibration_data(req.session_id)
 
 
 @app.get("/health")
