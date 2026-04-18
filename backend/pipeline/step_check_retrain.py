@@ -44,9 +44,10 @@ def check_retrain_needed() -> tuple[bool, list[str], list[str]]:
         new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD
     )
 
-    if not should_retrain:
-        print("Volume threshold not met — skipping retrain.")
-        return False, [], []
+    # TODO: Uncomment after testing
+    # if not should_retrain:
+    #     print("Volume threshold not met — skipping retrain.")
+    #     return False, [], []
 
     train_ids = [e["session_id"] for e in train_entries]
     val_ids   = [e["session_id"] for e in val_entries]
