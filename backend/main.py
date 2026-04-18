@@ -403,7 +403,7 @@ def calibrate_v2(req: CalibrateRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         print(f"Cleaning up local calibration data for session %s", req.session_id)
-        # cleanup_local_calibration_data(req.session_id)
+        cleanup_local_calibration_data(req.session_id)
 
 
 @app.get("/health")
