@@ -181,8 +181,10 @@ def register_schedule(cron: str = WEEKLY_CRON) -> None:
         )
 
     print(f"Registering weekly pipeline schedule (cron: '{cron}')")
+
+    #TODO: revert to 60 after testing
     scheduler = TaskScheduler(
-        sync_frequency_minutes=60,
+        sync_frequency_minutes=5,  # how often the scheduler checks for pending tasks to run
     )
     scheduler.add_task(
         schedule_function=retrain_pipeline,
