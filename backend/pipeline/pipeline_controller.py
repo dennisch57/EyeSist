@@ -112,7 +112,9 @@ def _unfreeze_backbone_from(model, layer_name: str, unfreeze_batchnorm: bool = F
 # ── Step 1: check_retrain ──────────────────────────────────────────────────────
 
 def step_check_retrain() -> tuple[bool, list, list]:
-    import os, sys
+    import subprocess, sys, os
+    subprocess.check_call([sys.executable, "-m", "pip", "install",
+                           "azure-identity", "azure-storage-blob", "python-dotenv"])
     sys.path.insert(0, os.getcwd())
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.getcwd(), ".env"))
@@ -161,7 +163,11 @@ def step_train_model(
         print("Volume threshold not met — skipping training.")
         return "", 0.0
 
-    import copy, io, os, sys
+    import subprocess, sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install",
+                           "azure-identity", "azure-storage-blob",
+                           "torch", "torchvision", "pillow", "numpy", "python-dotenv"])
+    import copy, io, os
     sys.path.insert(0, os.getcwd())
     from datetime import datetime, timezone
     from dotenv import load_dotenv
@@ -393,7 +399,11 @@ def step_evaluate_promote(
         print("Skipping evaluation — no candidate to promote.")
         return False, 0.0
 
-    import io, os, sys
+    import subprocess, sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install",
+                           "azure-identity", "azure-storage-blob",
+                           "torch", "torchvision", "pillow", "numpy", "python-dotenv"])
+    import io, os
     sys.path.insert(0, os.getcwd())
     from datetime import datetime, timezone
     from dotenv import load_dotenv
