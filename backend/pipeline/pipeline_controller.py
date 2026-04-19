@@ -113,8 +113,9 @@ def _unfreeze_backbone_from(model, layer_name: str, unfreeze_batchnorm: bool = F
 
 def step_check_retrain() -> tuple[bool, list, list]:
     import subprocess, sys, os
-    subprocess.check_call([sys.executable, "-m", "pip", "install",
-                           "azure-identity", "azure-storage-blob", "python-dotenv"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+                           "azure-identity", "azure-storage-blob", "python-dotenv",
+                           "numpy", "torch"])
     sys.path.insert(0, os.getcwd())
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.getcwd(), ".env"))
@@ -166,9 +167,10 @@ def step_train_model(
         return "", 0.0
 
     import subprocess, sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install",
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
                            "azure-identity", "azure-storage-blob",
-                           "torch", "torchvision", "pillow", "numpy", "python-dotenv"])
+                           "torch", "torchvision", "pillow", "numpy", "python-dotenv",
+                           "opencv-python-headless"])
     import copy, io, os
     sys.path.insert(0, os.getcwd())
     from datetime import datetime, timezone
@@ -402,9 +404,10 @@ def step_evaluate_promote(
         return False, 0.0
 
     import subprocess, sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install",
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
                            "azure-identity", "azure-storage-blob",
-                           "torch", "torchvision", "pillow", "numpy", "python-dotenv"])
+                           "torch", "torchvision", "pillow", "numpy", "python-dotenv",
+                           "opencv-python-headless"])
     import io, os
     sys.path.insert(0, os.getcwd())
     from datetime import datetime, timezone
