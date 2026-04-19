@@ -141,14 +141,11 @@ def step_check_retrain() -> tuple[bool, list, list]:
     print(f"Since last retrain: +{new_sessions} sessions / +{new_samples} samples")
     print(f"Threshold  : {RETRAIN_NEW_SAMPLES_THRESHOLD} samples")
 
-    should_retrain = True
-    # TODO: Uncomment after testing
+    should_retrain = new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD
 
-    #should_retrain = new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD
-
-    # if not should_retrain:
-    #     print("Volume threshold not met — skipping retrain.")
-    #     return False, [], []
+    if not should_retrain:
+        print("Volume threshold not met — skipping retrain.")
+        return False, [], []
 
     train_ids = [e["session_id"] for e in train_entries]
     val_ids   = [e["session_id"] for e in val_entries]
@@ -698,9 +695,8 @@ def register_schedule(cron: str = WEEKLY_CRON) -> None:
 
     print(f"Registering weekly pipeline schedule (cron: '{cron}')")
 
-    #TODO: revert to 60 after testing
     scheduler = TaskScheduler(
-        sync_frequency_minutes=5,  # how often the scheduler checks for pending tasks to run
+        sync_frequency_minutes=60,  # how often the scheduler checks for pending tasks to run
     )
     scheduler.add_task(
         schedule_function=build_and_run_pipeline,
