@@ -140,9 +140,11 @@ def step_check_retrain() -> tuple[bool, list, list]:
     print(f"Since last retrain: +{new_sessions} sessions / +{new_samples} samples")
     print(f"Threshold  : {RETRAIN_NEW_SAMPLES_THRESHOLD} samples")
 
-    should_retrain = new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD
-
+    should_retrain = True
     # TODO: Uncomment after testing
+
+    #should_retrain = new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD
+
     # if not should_retrain:
     #     print("Volume threshold not met — skipping retrain.")
     #     return False, [], []
