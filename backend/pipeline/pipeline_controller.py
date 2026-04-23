@@ -459,7 +459,7 @@ def retrain_pipeline(force: bool = False) -> dict:
         if promoted:
             component_upload_promoted(winner, winner_test_acc, prod_test_acc)
 
-        print(f"\nPipeline complete | winner={winner['config_name']} | promoted={promoted} | test_acc={winner_test_acc:.4f}")
+        print(f"\nPipeline complete | winner={winner['config_name']} | promoted={promoted} | test_acc={float(winner_test_acc):.4f}")
         return {"status": "done", "promoted": promoted, "winner": winner["config_name"], "test_acc": winner_test_acc}
 
     finally:
