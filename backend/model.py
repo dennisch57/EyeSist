@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 from runtime_config import get_runtime_device
-from training_config import LABELS, NUM_CLASSES, RETRAIN_EXPERIMENT_CONFIG
+from training_config import LABELS, NUM_CLASSES, CURRENT_PRODUCTION_CONFIG
 
 CLASS_TO_IDX = {c: i for i, c in enumerate(LABELS)}
 IDX_TO_CLASS = {i: c for i, c in enumerate(LABELS)}
@@ -203,9 +203,9 @@ def load_model(path: str) -> GazeClassifier:
     model = GazeClassifier(
         backbone=backbone,
         num_classes=NUM_CLASSES,
-        head_dense_units=RETRAIN_EXPERIMENT_CONFIG["head_dense_units"],
-        dropout=RETRAIN_EXPERIMENT_CONFIG["dropout"],
-        batch_norm_in_head=RETRAIN_EXPERIMENT_CONFIG["batch_norm_in_head"],
+        head_dense_units=CURRENT_PRODUCTION_CONFIG["head_dense_units"],
+        dropout=CURRENT_PRODUCTION_CONFIG["dropout"],
+        batch_norm_in_head=CURRENT_PRODUCTION_CONFIG["batch_norm_in_head"],
     )
     model.load_state_dict(state_dict)
     model.to(device)

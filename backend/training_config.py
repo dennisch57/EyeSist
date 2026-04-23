@@ -27,7 +27,45 @@ BASE_MODEL_GOOD_ACCURACY = 0.90
 # Volume-based retrain trigger thresholds
 RETRAIN_NEW_SAMPLES_THRESHOLD = 5000   # trigger if 5000+ new train samples since last retrain
 
-RETRAIN_EXPERIMENT_CONFIG = {
+PIPELINE_TMP_DIR = "/tmp/eyesist_pipeline"
+
+MODEL_CONFIGS = {
+    "resnet50_layer3": {
+        "backbone": "resnet50",
+        "unfreeze_from": "layer3",
+        "phase1_epochs": 15,
+        "phase2_epochs": 80,
+        "phase1_lr": 1e-3,
+        "phase2_lr": 1e-4,
+        "dropout": 0.1,
+        "batch_norm_in_head": True,
+        "early_stopping_patience": 10,
+    },
+    "mobilenet_v3_large": {
+        "backbone": "mobilenet_v3_large",
+        "unfreeze_from": "features.14",
+        "phase1_epochs": 15,
+        "phase2_epochs": 60,
+        "phase1_lr": 1e-3,
+        "phase2_lr": 1e-4,
+        "dropout": 0.2,
+        "batch_norm_in_head": False,
+        "early_stopping_patience": 10,
+    },
+    "efficientnet_b0": {
+        "backbone": "efficientnet_b0",
+        "unfreeze_from": "features.6",
+        "phase1_epochs": 15,
+        "phase2_epochs": 60,
+        "phase1_lr": 1e-3,
+        "phase2_lr": 1e-4,
+        "dropout": 0.2,
+        "batch_norm_in_head": False,
+        "early_stopping_patience": 10,
+    },
+}
+
+CURRENT_PRODUCTION_CONFIG = {
     "name": "ethxgaze_head",
     "phase1_epochs": 15,
     "phase2_epochs": 80,
