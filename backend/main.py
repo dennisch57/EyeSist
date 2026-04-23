@@ -29,7 +29,7 @@ from runtime_config import get_runtime_device_str
 from training_config import LABELS
 
 app = FastAPI()
-SMOOTHING_WINDOW = 10
+SMOOTHING_WINDOW = 8
 TARGET_CALIBRATION_IMAGES = 100
 RIDGE_CACHE_MAX_SIZE = 64
 RIDGE_MODEL_CACHE: OrderedDict[str, Any] = OrderedDict()

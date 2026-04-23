@@ -1,715 +1,470 @@
 """
 EyeSist base model retrain pipeline.
 
-All step logic lives in this single file. Each step function is self-contained:
-local imports happen inside the function body so ClearML remote agents don't
-need the pipeline package on their path. Steps are wired together with
-PipelineController.add_function_step().
+Shared training/eval helpers live in backend/pipeline_helpers.py and are
+imported inside each component (each component runs as an isolated subprocess;
+module-level definitions are NOT available unless imported explicitly).
 
 Pipeline steps:
-  1. check_retrain    — volume-based gate; assigns 70/15/15 splits via greedy balancer
-  2. train_model      — retrain from production weights on full train split
-  3. evaluate_promote — compare candidate vs production on frozen cumulative test set
+  1. check_retrain      — volume-based gate
+  2. ingest_data        — download user session images to /tmp/
+  3. train_resnet50     — train resnet50_layer3 config      ─┐
+  4. train_mobilenet    — train mobilenet_v3_large config    ├─ run in parallel
+  5. train_efficientnet — train efficientnet_b0 config      ─┘
+  6. eval_model         — pick best candidate by val accuracy
+  7. get_test_result    — evaluate winner on test set
+  8. evaluate_promotion — compare winner vs production on test set
+  9. upload_promoted    — upload to Azure if promoted (versioned)
+  finally               — clean up /tmp/eyesist_pipeline/
 
 Usage:
-  Register weekly schedule (run once to activate):
-    python pipeline_controller.py --schedule
+  Run locally (cron job):
+    python pipeline_controller.py --run-local [--force]
 
-  Trigger immediately (manual override, bypasses schedule):
-    python pipeline_controller.py --run-now
-
-  Local debug (all steps run in this process, no ClearML agents needed):
-    python pipeline_controller.py --run-local
+  Run on ClearML agents (NOTE: local /tmp/ paths are not shared across agents):
+    python pipeline_controller.py --run-now [--force]
 """
 
 import argparse
 import os
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
-
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-from clearml.automation import PipelineController
+from clearml import Task
+from clearml.automation import PipelineDecorator
+from training_config import PIPELINE_TMP_DIR
 
 CLEARML_PROJECT = "EyeSist"
 PIPELINE_NAME = "Base Model Retrain"
 CONTROLLER_QUEUE = "services"
 EXECUTION_QUEUE = "default"
-WEEKLY_CRON = "0 2 * * 1"  # 2am UTC every Monday
-
-
-# ── Module-level helpers (no local imports — safe to pass via helper_functions) ─
-
-def _train_one_epoch(model, loader, criterion, optimizer, device):
-    model.train()
-    loss_sum = correct = total = 0
-    for images, targets in loader:
-        images, targets = images.to(device), targets.to(device)
-        optimizer.zero_grad()
-        out = model(images)
-        loss = criterion(out, targets)
-        loss.backward()
-        optimizer.step()
-        loss_sum += loss.item() * images.size(0)
-        correct += out.detach().argmax(1).eq(targets).sum().item()
-        total += targets.size(0)
-    return loss_sum / total, correct / total
-
-
-def _evaluate_loader(model, loader, criterion, device):
-    import torch
-    model.eval()
-    loss_sum = correct = total = 0
-    with torch.no_grad():
-        for images, targets in loader:
-            images, targets = images.to(device), targets.to(device)
-            out = model(images)
-            loss_sum += criterion(out, targets).item() * images.size(0)
-            correct += out.argmax(1).eq(targets).sum().item()
-            total += targets.size(0)
-    return loss_sum / total, correct / total
-
-
-def _evaluate_acc(model, loader, device):
-    import torch
-    model.eval()
-    correct = total = 0
-    with torch.no_grad():
-        for images, targets in loader:
-            images, targets = images.to(device), targets.to(device)
-            correct += model(images).argmax(1).eq(targets).sum().item()
-            total += targets.size(0)
-    return correct / total if total > 0 else 0.0
-
-
-def _unfreeze_backbone_from(model, layer_name: str, unfreeze_batchnorm: bool = False) -> None:
-    import torch.nn as nn
-    layer_order = ["conv1", "bn1", "layer1", "layer2", "layer3", "layer4", "avgpool"]
-    if layer_name not in layer_order:
-        raise ValueError(f"layer_name must be one of {layer_order}, got '{layer_name}'")
-    unfreeze_idx = layer_order.index(layer_name)
-    for param in model.backbone.parameters():
-        param.requires_grad = False
-    for name, module in model.backbone.named_children():
-        if name in layer_order and layer_order.index(name) >= unfreeze_idx:
-            for param in module.parameters():
-                param.requires_grad = True
-            if not unfreeze_batchnorm:
-                for m in module.modules():
-                    if isinstance(m, nn.BatchNorm2d):
-                        m.requires_grad_(False)
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
-    print(
-        f"Unfrozen from '{layer_name}' (BN frozen: {not unfreeze_batchnorm}): "
-        f"{trainable:,}/{total:,} trainable ({100 * trainable / total:.1f}%)"
-    )
+PROMOTION_MIN_DELTA = 0.02
 
 
 # ── Step 1: check_retrain ──────────────────────────────────────────────────────
 
-def step_check_retrain() -> tuple[bool, list, list]:
-    import subprocess, sys, os
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-                           "azure-identity", "azure-storage-blob", "python-dotenv",
-                           "numpy", "torch"])
-    sys.path.insert(0, os.getcwd())
+@PipelineDecorator.component(
+    name="check_retrain",
+    return_values=["should_retrain", "train_ids", "val_ids", "test_ids"],
+    task_type=Task.TaskTypes.data_processing,
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_check_retrain(force: bool = False) -> tuple:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.getcwd(), ".env"))
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-    from azure_storage import load_manifest, load_last_retrain_info
+    from azure_storage import load_last_retrain_info, load_manifest
     from training_config import RETRAIN_NEW_SAMPLES_THRESHOLD
 
     manifest = load_manifest()
     last = load_last_retrain_info()
-
     train_entries = [e for e in manifest if e.get("split") == "train"]
     val_entries   = [e for e in manifest if e.get("split") == "val"]
-
-    current_train_sessions = len(train_entries)
-    current_train_samples  = sum(e.get("num_samples", 0) for e in train_entries)
-    prev_train_sessions    = last.get("num_train_sessions", 0)
-    prev_train_samples     = last.get("num_train_samples", 0)
-
-    new_sessions = current_train_sessions - prev_train_sessions
-    new_samples  = current_train_samples  - prev_train_samples
-
-    print(f"Train pool : {current_train_sessions} sessions / {current_train_samples} samples")
-    print(f"Since last retrain: +{new_sessions} sessions / +{new_samples} samples")
-    print(f"Threshold  : {RETRAIN_NEW_SAMPLES_THRESHOLD} samples")
-
-    should_retrain = new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD
-
-    if not should_retrain:
-        print("Volume threshold not met — skipping retrain.")
-        return False, [], []
-
-    train_ids = [e["session_id"] for e in train_entries]
-    val_ids   = [e["session_id"] for e in val_entries]
-
-    print(f"Retrain triggered: {len(train_ids)} train, {len(val_ids)} val sessions")
-    return should_retrain, train_ids, val_ids
-
-
-# ── Step 2: train_model ────────────────────────────────────────────────────────
-
-def step_train_model(
-    should_retrain: bool, train_session_ids: list, val_session_ids: list
-) -> tuple[str, float]:
-    if not should_retrain:
-        print("Volume threshold not met — skipping training.")
-        return "", 0.0
-
-    import subprocess, sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-                           "azure-identity", "azure-storage-blob",
-                           "torch", "torchvision", "pillow", "numpy", "python-dotenv",
-                           "opencv-python-headless"])
-    import copy, io, os
-    sys.path.insert(0, os.getcwd())
-    from datetime import datetime, timezone
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.getcwd(), ".env"))
-
-    import torch
-    import torch.nn as nn
-    import torch.optim as optim
-    from PIL import Image
-    from torch.utils.data import ConcatDataset, DataLoader, Dataset
-    from torchvision import datasets, transforms
-
-    from azure_storage import download_backbone, download_bytes, list_session_images, upload_bytes
-    from model import GazeClassifier, _ResizeWithPad, resnet50
-    from runtime_config import get_runtime_device, get_runtime_device_str
-    from training_config import (
-        BATCH_SIZE, DATA_DIR, IMG_SIZE, LABELS, NUM_CLASSES, NUM_WORKERS,
-        RETRAIN_EXPERIMENT_CONFIG, TRAIN_DIR, VAL_DIR, seed_everything,
+    test_entries  = [e for e in manifest if e.get("split") == "test"]
+    current_samples = sum(e.get("num_samples", 0) for e in train_entries)
+    prev_samples    = last.get("num_train_samples", 0)
+    new_samples     = current_samples - prev_samples
+    print(f"Train pool: {current_samples} | since last retrain: +{new_samples} | threshold: {RETRAIN_NEW_SAMPLES_THRESHOLD}")
+    if force:
+        print("Force flag set — bypassing volume threshold.")
+    should_retrain = force or (new_samples >= RETRAIN_NEW_SAMPLES_THRESHOLD)
+    return (
+        should_retrain,
+        [e["session_id"] for e in train_entries],
+        [e["session_id"] for e in val_entries],
+        [e["session_id"] for e in test_entries],
     )
 
-    CANDIDATE_BLOB_PREFIX = "models/backbone/candidate"
-    label_to_idx = {label: i for i, label in enumerate(LABELS)}
 
-    class _UserSessionDataset(Dataset):
-        def __init__(self, samples, transform):
-            self.samples = samples
-            self.transform = transform
+# ── Step 2: ingest_data ────────────────────────────────────────────────────────
 
-        def __len__(self):
-            return len(self.samples)
+@PipelineDecorator.component(
+    name="ingest_data",
+    return_values=["user_data_dir"],
+    task_type=Task.TaskTypes.data_processing,
+    parents=["check_retrain"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_ingest_data(train_ids: list, val_ids: list, test_ids: list) -> str:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-        def __getitem__(self, idx):
-            img_bytes, label_idx = self.samples[idx]
-            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            return self.transform(img), label_idx
+    from azure_storage import download_bytes, list_session_images
+    from training_config import LABELS, PIPELINE_TMP_DIR, TRAIN_DIR, VAL_DIR, TEST_DIR
+    from clearml import Task as ClearMLTask
 
-    class _EarlyStopping:
-        def __init__(self, patience):
-            self.patience = patience
-            self.counter = 0
-            self.best_score = None
-            self.best_state = None
-            self.should_stop = False
+    def _count_images(directory: str) -> int:
+        total = 0
+        if not os.path.isdir(directory):
+            return 0
+        for _, _, files in os.walk(directory):
+            total += sum(1 for f in files if f.lower().endswith((".jpg", ".jpeg", ".png")))
+        return total
 
-        def __call__(self, val_acc, model):
-            if self.best_score is None or val_acc > self.best_score:
-                self.best_score = val_acc
-                self.best_state = copy.deepcopy(model.state_dict())
-                self.counter = 0
-            else:
-                self.counter += 1
-                if self.counter >= self.patience:
-                    self.should_stop = True
+    orig_counts = {
+        "train": _count_images(TRAIN_DIR),
+        "val":   _count_images(VAL_DIR),
+        "test":  _count_images(TEST_DIR),
+    }
+    print("Original dataset:")
+    for split, n in orig_counts.items():
+        print(f"  {split}: {n} images")
 
-        def restore_best(self, model):
-            if self.best_state is not None:
-                model.load_state_dict(self.best_state)
-                print(f"Restored best checkpoint (val_acc: {self.best_score:.4f})")
+    task = ClearMLTask.current_task()
+    logger = task.get_logger() if task else None
+    if logger:
+        for split, n in orig_counts.items():
+            logger.report_single_value(f"original_dataset/{split}", n)
 
-    def _download_sessions(session_ids):
-        samples = []
+    user_data_dir = os.path.join(PIPELINE_TMP_DIR, "user_data")
+    split_ids = {"train": train_ids, "val": val_ids, "test": test_ids}
+    print("User session data:")
+    for split, session_ids in split_ids.items():
+        split_dir = os.path.join(user_data_dir, split)
+        for label in LABELS:
+            os.makedirs(os.path.join(split_dir, label), exist_ok=True)
+        count = 0
         for sid in session_ids:
             for blob_path in list_session_images(sid):
                 parts = blob_path.split("/")
-                label = parts[-2] if len(parts) >= 2 else None
+                if len(parts) < 2:
+                    continue
+                label = parts[-2]
                 if label not in LABELS:
                     continue
+                local_path = os.path.join(split_dir, label, f"{sid[:8]}_{parts[-1]}")
                 try:
-                    samples.append((download_bytes(blob_path), label_to_idx[label]))
+                    with open(local_path, "wb") as f:
+                        f.write(download_bytes(blob_path))
+                    count += 1
                 except Exception as e:
-                    print(f"  Warning: skipping {blob_path}: {e}")
-        print(f"Downloaded {len(samples)} user images from {len(session_ids)} sessions")
-        return samples
+                    print(f"  Warning: {blob_path}: {e}")
+        print(f"  {split}: {count} images from {len(session_ids)} sessions")
+        if logger:
+            logger.report_single_value(f"user_data/{split}", count)
+            logger.report_single_value(f"total/{split}", orig_counts[split] + count)
 
-    seed_everything()
-    cfg = RETRAIN_EXPERIMENT_CONFIG
-    device = get_runtime_device()
-    print(f"Training on: {get_runtime_device_str()}")
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-
-    from clearml import Task
-    task = Task.current_task()
-    if task is None:
-        task = Task.init(
-            project_name="EyeSist",
-            task_name=f"train_base_model_{timestamp}",
-            task_type=Task.TaskTypes.training,
-            reuse_last_task_id=False,
-        )
-    logger = task.get_logger()
-    task.connect(cfg, name="retrain_config")
-    task.connect(
-        {"train_session_ids": train_session_ids, "val_session_ids": val_session_ids},
-        name="input_data",
-    )
-
-    user_train_samples = _download_sessions(train_session_ids)
-    user_val_samples   = _download_sessions(val_session_ids)
-
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    train_tf = transforms.Compose([
-        _ResizeWithPad(IMG_SIZE, fill=0),
-        transforms.RandomRotation(10),
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        transforms.ToTensor(), normalize,
-    ])
-    eval_tf = transforms.Compose([
-        _ResizeWithPad(IMG_SIZE, fill=0), transforms.ToTensor(), normalize,
-    ])
-
-    if not (os.path.isdir(TRAIN_DIR) and os.path.isdir(VAL_DIR)):
-        raise FileNotFoundError(f"Local dataset not found at {os.path.abspath(DATA_DIR)}")
-
-    original_train = datasets.ImageFolder(TRAIN_DIR, transform=train_tf)
-    original_val   = datasets.ImageFolder(VAL_DIR,   transform=eval_tf)
-
-    train_ds = (
-        ConcatDataset([original_train, _UserSessionDataset(user_train_samples, train_tf)])
-        if user_train_samples else original_train
-    )
-    val_ds = (
-        ConcatDataset([original_val, _UserSessionDataset(user_val_samples, eval_tf)])
-        if user_val_samples else original_val
-    )
-    print(f"Train: {len(train_ds)} total | Val: {len(val_ds)} total")
-
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  num_workers=NUM_WORKERS, pin_memory=True)
-    val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
-
-    print("Loading production model from Azure")
-    model_bytes = download_backbone()
-    checkpoint  = torch.load(io.BytesIO(model_bytes), map_location=device)
-    state_dict  = checkpoint.get("model_state_dict", checkpoint)
-    cfg_saved   = checkpoint.get("exp_cfg", cfg)
-    model = GazeClassifier(
-        backbone=resnet50(),
-        num_classes=NUM_CLASSES,
-        head_dense_units=cfg_saved.get("head_dense_units", cfg["head_dense_units"]),
-        dropout=cfg_saved.get("dropout", cfg["dropout"]),
-        batch_norm_in_head=cfg_saved.get("batch_norm_in_head", cfg["batch_norm_in_head"]),
-    )
-    model.load_state_dict(state_dict)
-    model.to(device)
-
-    criterion  = nn.CrossEntropyLoss()
-    patience   = cfg.get("early_stopping_patience", 10)
-    all_history: list[dict] = []
-
-    def _run_phase(phase_name, num_epochs, optimizer, scheduler, epoch_offset=0):
-        stopper = _EarlyStopping(patience)
-        for epoch in range(num_epochs):
-            g = epoch_offset + epoch + 1
-            tr_loss, tr_acc = _train_one_epoch(model, train_loader, criterion, optimizer, device)
-            va_loss, va_acc = _evaluate_loader(model, val_loader, criterion, device)
-            if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(va_loss)
-            elif scheduler is not None:
-                scheduler.step()
-            lr = optimizer.param_groups[0]["lr"]
-            print(
-                f"[{phase_name}] {epoch+1}/{num_epochs} (g{g}) | "
-                f"train {tr_acc:.4f} | val {va_acc:.4f} | lr {lr:.2e}"
-            )
-            logger.report_scalar("loss",     "train", tr_loss, iteration=g)
-            logger.report_scalar("loss",     "val",   va_loss, iteration=g)
-            logger.report_scalar("accuracy", "train", tr_acc,  iteration=g)
-            logger.report_scalar("accuracy", "val",   va_acc,  iteration=g)
-            logger.report_scalar("lr", phase_name, lr, iteration=g)
-            all_history.append({
-                "phase": phase_name, "epoch_global": g,
-                "loss": tr_loss, "accuracy": tr_acc,
-                "val_loss": va_loss, "val_accuracy": va_acc, "lr": lr,
-            })
-            stopper(va_acc, model)
-            if stopper.should_stop:
-                print(f"Early stopping at epoch {epoch + 1}")
-                break
-        stopper.restore_best(model)
-
-    print("\n--- Phase 1: head only ---")
-    model.freeze_backbone()
-    opt1   = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg["phase1_lr"])
-    sched1 = optim.lr_scheduler.ReduceLROnPlateau(opt1, mode="min", factor=0.5, patience=2)
-    _run_phase("phase1", cfg["phase1_epochs"], opt1, sched1, epoch_offset=0)
-
-    if cfg.get("phase2_epochs", 0) > 0:
-        print(f"\n--- Phase 2: fine-tune from '{cfg['unfreeze_from_layer']}' ---")
-        _unfreeze_backbone_from(model, cfg["unfreeze_from_layer"], cfg.get("unfreeze_batchnorm", False))
-        backbone_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith("backbone")]
-        head_params     = [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith("backbone")]
-        opt2 = optim.Adam([
-            {"params": backbone_params, "lr": cfg["phase2_lr"] * 0.1},
-            {"params": head_params,     "lr": cfg["phase2_lr"]},
-        ])
-        sched2 = optim.lr_scheduler.ReduceLROnPlateau(opt2, mode="min", factor=0.5, patience=3)
-        _run_phase("phase2", cfg["phase2_epochs"], opt2, sched2, epoch_offset=len(all_history))
-
-    best_val_acc = max(h["val_accuracy"] for h in all_history) if all_history else 0.0
-    print(f"\nBest val accuracy: {best_val_acc:.4f}")
-
-    candidate_blob = f"{CANDIDATE_BLOB_PREFIX}/ethxgaze_candidate_{timestamp}.pth"
-    buf = io.BytesIO()
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "exp_cfg": cfg,
-            "labels": LABELS,
-            "val_accuracy": best_val_acc,
-            "timestamp": timestamp,
-        },
-        buf,
-    )
-    upload_bytes(candidate_blob, buf.getvalue())
-    print(f"Candidate uploaded: {candidate_blob}")
-
-    logger.report_single_value("best_val_accuracy", best_val_acc)
-    task.upload_artifact("candidate_blob_path", candidate_blob)
-
-    return candidate_blob, best_val_acc
+    return user_data_dir
 
 
-# ── Step 3: evaluate_promote ───────────────────────────────────────────────────
+# ── Steps 3-5: per-model training (run in parallel on ClearML) ─────────────────
 
-def step_evaluate_promote(
-    should_retrain: bool, candidate_blob: str, candidate_val_accuracy: float
-) -> tuple[bool, float]:
-    if not should_retrain or not candidate_blob:
-        print("Skipping evaluation — no candidate to promote.")
-        return False, 0.0
-
-    import subprocess, sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-                           "azure-identity", "azure-storage-blob",
-                           "torch", "torchvision", "pillow", "numpy", "python-dotenv",
-                           "opencv-python-headless"])
-    import io, os
-    sys.path.insert(0, os.getcwd())
-    from datetime import datetime, timezone
+@PipelineDecorator.component(
+    name="train_resnet50",
+    return_values=["candidate"],
+    task_type=Task.TaskTypes.training,
+    parents=["ingest_data"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_train_resnet50(user_data_dir: str) -> dict:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.getcwd(), ".env"))
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
+    from clearml import Task as ClearMLTask
+    from pipeline_helpers import train_single_model
+
+    task = ClearMLTask.current_task()
+    logger = task.get_logger() if task else None
+    return train_single_model("resnet50_layer3", user_data_dir, logger)
+
+
+@PipelineDecorator.component(
+    name="train_mobilenet",
+    return_values=["candidate"],
+    task_type=Task.TaskTypes.training,
+    parents=["ingest_data"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_train_mobilenet(user_data_dir: str) -> dict:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
+    from clearml import Task as ClearMLTask
+    from pipeline_helpers import train_single_model
+
+    task = ClearMLTask.current_task()
+    logger = task.get_logger() if task else None
+    return train_single_model("mobilenet_v3_large", user_data_dir, logger)
+
+
+@PipelineDecorator.component(
+    name="train_efficientnet",
+    return_values=["candidate"],
+    task_type=Task.TaskTypes.training,
+    parents=["ingest_data"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_train_efficientnet(user_data_dir: str) -> dict:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
+    from clearml import Task as ClearMLTask
+    from pipeline_helpers import train_single_model
+
+    task = ClearMLTask.current_task()
+    logger = task.get_logger() if task else None
+    return train_single_model("efficientnet_b0", user_data_dir, logger)
+
+
+# ── Step 6: eval_model ─────────────────────────────────────────────────────────
+
+@PipelineDecorator.component(
+    name="eval_model",
+    return_values=["winner"],
+    task_type=Task.TaskTypes.qc,
+    parents=["train_resnet50", "train_mobilenet", "train_efficientnet"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_eval_model(
+    candidate_resnet: dict,
+    candidate_mobilenet: dict,
+    candidate_efficientnet: dict,
+    user_data_dir: str,
+) -> dict:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
     import torch
-    from PIL import Image
-    from torch.utils.data import ConcatDataset, DataLoader, Dataset
-    from torchvision import datasets, transforms
+    import torch.nn as nn
+    from clearml import Task as ClearMLTask
+    from pipeline_helpers import build_loaders, build_model_for_eval, eval_with_metrics
+    from runtime_config import get_runtime_device
 
-    from azure_storage import (
-        delete_blob, download_backbone, download_bytes, download_json,
-        list_session_images, load_manifest, load_model_version,
-        save_last_retrain_info, save_model_version, upload_bytes, upload_json,
-    )
-    from model import GazeClassifier, _ResizeWithPad, resnet50
-    from runtime_config import get_runtime_device, get_runtime_device_str
-    from training_config import (
-        BATCH_SIZE, DATA_DIR, IMG_SIZE, LABELS, NUM_CLASSES, NUM_WORKERS,
-        RETRAIN_EXPERIMENT_CONFIG, TEST_DIR,
-    )
-
-    PROMOTION_MIN_DELTA = 0.05
-    PROMOTION_LOG_BLOB  = "models/backbone/promotion_log.json"
-    label_to_idx = {label: i for i, label in enumerate(LABELS)}
-
-    class _UserTestDataset(Dataset):
-        def __init__(self, samples, transform):
-            self.samples = samples
-            self.transform = transform
-
-        def __len__(self):
-            return len(self.samples)
-
-        def __getitem__(self, idx):
-            img_bytes, label_idx = self.samples[idx]
-            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            return self.transform(img), label_idx
+    candidates = [candidate_resnet, candidate_mobilenet, candidate_efficientnet]
 
     device = get_runtime_device()
-    print(f"Evaluation on: {get_runtime_device_str()}")
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    criterion = nn.CrossEntropyLoss()
+    _, val_loader, _ = build_loaders(user_data_dir)
 
-    from clearml import Task
-    task = Task.current_task()
-    if task is None:
-        task = Task.init(
-            project_name="EyeSist",
-            task_name=f"evaluate_promote_{timestamp}",
-            task_type=Task.TaskTypes.qc,
-            reuse_last_task_id=False,
+    task = ClearMLTask.current_task()
+    logger = task.get_logger() if task else None
+
+    best = None
+    print("Evaluating candidates on validation set:")
+    for candidate in candidates:
+        ckpt = torch.load(candidate["checkpoint_path"], map_location=device)
+        model = build_model_for_eval(ckpt["config"], device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        _, val_acc, fps, _ = eval_with_metrics(
+            model, val_loader, criterion, device,
+            name=candidate["config_name"], logger=logger,
         )
-    logger = task.get_logger()
+        if logger:
+            logger.report_single_value(f"eval_val_acc/{candidate['config_name']}", val_acc)
+            logger.report_single_value(f"eval_fps/{candidate['config_name']}", fps)
+        if best is None or val_acc > best["val_acc"]:
+            best = {**candidate, "val_acc": val_acc}
 
-    manifest  = load_manifest()
-    test_ids  = [e["session_id"] for e in manifest if e.get("split") == "test"]
-    print(f"Found {len(test_ids)} test-split sessions in manifest")
+    print(f"Winner: {best['config_name']} (val_acc={best['val_acc']:.4f})")
+    return best
 
-    user_samples: list[tuple[bytes, int]] = []
-    for sid in test_ids:
-        for blob_path in list_session_images(sid):
-            parts = blob_path.split("/")
-            label = parts[-2] if len(parts) >= 2 else None
-            if label not in LABELS:
-                continue
-            try:
-                user_samples.append((download_bytes(blob_path), label_to_idx[label]))
-            except Exception as e:
-                print(f"  Warning: skipping {blob_path}: {e}")
-    print(f"Downloaded {len(user_samples)} user test images")
 
-    eval_tf = transforms.Compose([
-        _ResizeWithPad(IMG_SIZE, fill=0),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
-    if not os.path.isdir(TEST_DIR):
-        raise FileNotFoundError(f"Local dataset not found at {os.path.abspath(DATA_DIR)}")
-    original_test = datasets.ImageFolder(TEST_DIR, transform=eval_tf)
-    test_ds = (
-        ConcatDataset([original_test, _UserTestDataset(user_samples, eval_tf)])
-        if user_samples else original_test
+# ── Step 7: get_test_result ────────────────────────────────────────────────────
+
+@PipelineDecorator.component(
+    name="get_test_result",
+    return_values=["winner_test_acc"],
+    task_type=Task.TaskTypes.qc,
+    parents=["eval_model"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_get_test_result(winner: dict, user_data_dir: str) -> float:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
+    import torch
+    import torch.nn as nn
+    from clearml import Task as ClearMLTask
+    from pipeline_helpers import build_loaders, build_model_for_eval, eval_with_metrics
+    from runtime_config import get_runtime_device
+
+    device = get_runtime_device()
+    criterion = nn.CrossEntropyLoss()
+    _, _, test_loader = build_loaders(user_data_dir)
+
+    task = ClearMLTask.current_task()
+    logger = task.get_logger() if task else None
+
+    ckpt = torch.load(winner["checkpoint_path"], map_location=device)
+    model = build_model_for_eval(ckpt["config"], device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    _, test_acc, fps, _ = eval_with_metrics(
+        model, test_loader, criterion, device,
+        name=f"test/{winner['config_name']}", logger=logger,
     )
-    print(f"Test: {len(original_test)} original + {len(user_samples)} user = {len(test_ds)} total")
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
 
-    def _load_model(model_bytes):
-        checkpoint = torch.load(io.BytesIO(model_bytes), map_location=device)
-        state_dict = checkpoint.get("model_state_dict", checkpoint)
-        cfg = checkpoint.get("exp_cfg", RETRAIN_EXPERIMENT_CONFIG)
-        m = GazeClassifier(
-            backbone=resnet50(),
-            num_classes=NUM_CLASSES,
-            head_dense_units=cfg.get("head_dense_units", []),
-            dropout=cfg.get("dropout", 0.1),
-            batch_norm_in_head=cfg.get("batch_norm_in_head", True),
-        )
-        m.load_state_dict(state_dict)
-        m.to(device)
-        m.eval()
-        return m
+    print(f"Winner ({winner['config_name']}) test acc: {test_acc:.4f} | fps: {fps:.1f}")
+    if logger:
+        logger.report_single_value("winner_test_acc", test_acc)
+        logger.report_single_value("winner_fps", fps)
 
-    print("Loading candidate model from Azure")
-    candidate_bytes = download_bytes(candidate_blob)
-    candidate_model = _load_model(candidate_bytes)
+    return test_acc
 
-    print("Loading production model from Azure")
-    production_model = _load_model(download_backbone())
 
-    candidate_test_acc  = _evaluate_acc(candidate_model, test_loader, device)
-    production_test_acc = _evaluate_acc(production_model, test_loader, device)
+# ── Step 8: evaluate_promotion ─────────────────────────────────────────────────
 
-    print(f"Candidate  test acc: {candidate_test_acc:.4f}  (val: {candidate_val_accuracy:.4f})")
-    print(f"Production test acc: {production_test_acc:.4f}")
+@PipelineDecorator.component(
+    name="evaluate_promotion",
+    return_values=["promoted", "prod_test_acc"],
+    task_type=Task.TaskTypes.qc,
+    parents=["get_test_result"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_evaluate_promotion(winner: dict, winner_test_acc: float, user_data_dir: str) -> tuple:
+    import io, os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-    logger.report_single_value("candidate_val_accuracy",  candidate_val_accuracy)
-    logger.report_single_value("candidate_test_accuracy", candidate_test_acc)
-    logger.report_single_value("production_test_accuracy", production_test_acc)
+    import torch
+    import torch.nn as nn
+    from clearml import Task as ClearMLTask
+    from pipeline_helpers import build_loaders, eval_loader
 
-    promoted      = candidate_test_acc >= production_test_acc + PROMOTION_MIN_DELTA
-    promoted_blob = None
+    from azure_storage import download_backbone
+    from model import GazeClassifier, resnet50
+    from runtime_config import get_runtime_device
+    from training_config import NUM_CLASSES
 
-    if promoted:
-        version_info  = load_model_version()
-        next_version  = version_info["latest_version"] + 1
-        promoted_blob = f"models/backbone/promoted/ethxgaze_v{next_version}_{timestamp}.pth"
-        print(
-            f"Promoting candidate → v{next_version} "
-            f"({candidate_test_acc:.4f} > {production_test_acc:.4f} + {PROMOTION_MIN_DELTA})"
-        )
-        upload_bytes(promoted_blob, candidate_bytes)
-        save_model_version({
-            "latest_version": next_version,
-            "latest_promoted_blob": promoted_blob,
-            "latest_promoted_timestamp": timestamp,
-            "latest_candidate_test_acc": candidate_test_acc,
-            "latest_production_test_acc": production_test_acc,
-            "production_blob": version_info.get("production_blob", "models/backbone/ethxgaze_backbone.pth"),
-            "production_version": version_info.get("production_version"),
-        })
-        train_entries = [e for e in manifest if e.get("split") == "train"]
-        save_last_retrain_info({
-            "timestamp": timestamp,
-            "num_train_sessions": len(train_entries),
-            "num_train_samples": sum(e.get("num_samples", 0) for e in train_entries),
-        })
-        print(f"Candidate approved for manual rollout → {promoted_blob}")
-    else:
-        print(
-            f"NOT promoted — need +{PROMOTION_MIN_DELTA} improvement "
-            f"({candidate_test_acc:.4f} vs {production_test_acc:.4f})."
-        )
+    PROMOTION_MIN_DELTA = 0.02
 
-    try:
-        delete_blob(candidate_blob)
-        print(f"Deleted candidate blob: {candidate_blob}")
-    except Exception as e:
-        print(f"Warning: could not delete candidate blob: {e}")
+    device = get_runtime_device()
+    criterion = nn.CrossEntropyLoss()
+    _, _, test_loader = build_loaders(user_data_dir)
 
-    promotion_record = {
+    production_bytes = download_backbone()
+    ckpt = torch.load(io.BytesIO(production_bytes), map_location=device)
+    state_dict = ckpt.get("model_state_dict", ckpt)
+    saved_cfg = ckpt.get("exp_cfg", {})
+    prod_model = GazeClassifier(
+        backbone=resnet50(),
+        num_classes=NUM_CLASSES,
+        head_dense_units=saved_cfg.get("head_dense_units", []),
+        dropout=saved_cfg.get("dropout", 0.1),
+        batch_norm_in_head=saved_cfg.get("batch_norm_in_head", True),
+    ).to(device)
+    prod_model.load_state_dict(state_dict)
+    _, prod_test_acc = eval_loader(prod_model, test_loader, criterion, device)
+
+    promoted = winner_test_acc >= prod_test_acc + PROMOTION_MIN_DELTA
+    print(f"Candidate: {winner_test_acc:.4f} | Production: {prod_test_acc:.4f} | Need +{PROMOTION_MIN_DELTA} → promoted={promoted}")
+
+    task = ClearMLTask.current_task()
+    if task:
+        logger = task.get_logger()
+        logger.report_single_value("production_test_acc", prod_test_acc)
+        logger.report_single_value("promoted", int(promoted))
+
+    return promoted, prod_test_acc
+
+
+# ── Step 9: upload_promoted ────────────────────────────────────────────────────
+
+@PipelineDecorator.component(
+    name="upload_promoted",
+    return_values=[],
+    task_type=Task.TaskTypes.custom,
+    parents=["evaluate_promotion"],
+    execution_queue=EXECUTION_QUEUE,
+)
+def component_upload_promoted(winner: dict, winner_test_acc: float, prod_test_acc: float) -> None:
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
+    from datetime import datetime, timezone
+    from azure_storage import (
+        load_manifest, load_model_version, save_last_retrain_info,
+        save_model_version, upload_bytes,
+    )
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    version_info = load_model_version()
+    next_version = version_info["latest_version"] + 1
+    promoted_blob = f"models/backbone/promoted/ethxgaze_v{next_version}_{timestamp}.pth"
+
+    with open(winner["checkpoint_path"], "rb") as f:
+        model_bytes = f.read()
+
+    upload_bytes(promoted_blob, model_bytes)
+    upload_bytes("models/backbone/ethxgaze_backbone.pth", model_bytes)
+    save_model_version({
+        "latest_version": next_version,
+        "latest_promoted_blob": promoted_blob,
+        "latest_promoted_timestamp": timestamp,
+        "latest_candidate_test_acc": winner_test_acc,
+        "latest_production_test_acc": prod_test_acc,
+    })
+    manifest = load_manifest()
+    train_entries = [e for e in manifest if e.get("split") == "train"]
+    save_last_retrain_info({
         "timestamp": timestamp,
-        "promoted": promoted,
-        "candidate_val_accuracy": candidate_val_accuracy,
-        "candidate_test_accuracy": candidate_test_acc,
-        "production_test_accuracy": production_test_acc,
-        "promoted_blob": promoted_blob,
-    }
-    try:
-        existing = []
-        try:
-            existing = download_json(PROMOTION_LOG_BLOB)
-        except Exception:
-            pass
-        existing.append(promotion_record)
-        upload_json(PROMOTION_LOG_BLOB, existing)
-    except Exception as e:
-        print(f"Warning: could not update promotion log: {e}")
-
-    logger.report_single_value("promoted", int(promoted))
-    task.upload_artifact("promotion_record", promotion_record)
-
-    return promoted, candidate_test_acc
+        "num_train_sessions": len(train_entries),
+        "num_train_samples": sum(e.get("num_samples", 0) for e in train_entries),
+    })
+    print(f"Promoted to v{next_version}: {promoted_blob}")
 
 
 # ── Pipeline definition ────────────────────────────────────────────────────────
 
-def build_and_run_pipeline(run_locally: bool = False) -> None:
-    pipe = PipelineController(
-        name=PIPELINE_NAME,
-        project=CLEARML_PROJECT,
-        version="1.0",
-        add_pipeline_tags=True,
-        abort_on_failure=False,
-    )
-    pipe.set_default_execution_queue(EXECUTION_QUEUE)
-
-    pipe.add_function_step(
-        name="check_retrain",
-        function=step_check_retrain,
-        function_return=["should_retrain", "train_session_ids", "val_session_ids"],
-        packages=["azure-identity", "azure-storage-blob", "python-dotenv"],
-        task_type="data_processing",
-        working_dir="backend",
-    )
-
-    pipe.add_function_step(
-        name="train_model",
-        parents=["check_retrain"],
-        function=step_train_model,
-        function_kwargs=dict(
-            should_retrain="${check_retrain.should_retrain}",
-            train_session_ids="${check_retrain.train_session_ids}",
-            val_session_ids="${check_retrain.val_session_ids}",
-        ),
-        function_return=["candidate_blob", "val_accuracy"],
-        helper_functions=[_train_one_epoch, _evaluate_loader, _unfreeze_backbone_from],
-        packages=[
-            "azure-identity", "azure-storage-blob",
-            "torch", "torchvision", "pillow", "numpy", "scikit-learn", "python-dotenv",
-        ],
-        task_type="training",
-        working_dir="backend",
-    )
-
-    pipe.add_function_step(
-        name="evaluate_promote",
-        parents=["train_model"],
-        function=step_evaluate_promote,
-        function_kwargs=dict(
-            should_retrain="${check_retrain.should_retrain}",
-            candidate_blob="${train_model.candidate_blob}",
-            candidate_val_accuracy="${train_model.val_accuracy}",
-        ),
-        function_return=["promoted", "candidate_test_acc"],
-        helper_functions=[_evaluate_acc],
-        packages=[
-            "azure-identity", "azure-storage-blob",
-            "torch", "torchvision", "pillow", "numpy", "python-dotenv",
-        ],
-        task_type="qc",
-        working_dir="backend",
-    )
-
-    if run_locally:
-        pipe.start_locally(run_pipeline_steps_locally=True)
-    else:
-        pipe.start(queue=CONTROLLER_QUEUE)
-
-
-# ── Schedule registration ──────────────────────────────────────────────────────
-
-def register_schedule(cron: str = WEEKLY_CRON) -> None:
-    """
-    Register this pipeline as a weekly ClearML scheduled job.
-    Run this once; the ClearML scheduler service handles all future executions.
-    To change the schedule, re-run with a different --cron value.
-    """
-    from clearml.automation.scheduler import TaskScheduler
-
-    parts = cron.split()
-    if len(parts) != 5:
-        raise ValueError(f"Expected 5-field cron expression, got: '{cron}'")
-
-    minute_s, hour_s, day_s, month_s, weekday_s = parts
-    if day_s != "*" or month_s != "*":
-        raise ValueError(
-            "This ClearML scheduler wrapper only supports weekly cron expressions "
-            "with '*' for day-of-month and month."
-        )
-
+@PipelineDecorator.pipeline(
+    name=PIPELINE_NAME,
+    project=CLEARML_PROJECT,
+    version="3.0",
+    pipeline_execution_queue=CONTROLLER_QUEUE,
+    add_pipeline_tags=True,
+)
+def retrain_pipeline(force: bool = False) -> dict:
     try:
-        minute = int(minute_s)
-        hour   = int(hour_s)
-    except ValueError as exc:
-        raise ValueError(f"Invalid cron minute/hour in '{cron}'") from exc
+        should_retrain, train_ids, val_ids, test_ids = component_check_retrain(force=force)
 
-    weekday_map = {
-        "0": "sunday", "1": "monday", "2": "tuesday", "3": "wednesday",
-        "4": "thursday", "5": "friday", "6": "saturday", "7": "sunday",
-    }
-    weekdays = [weekday_map.get(token.strip()) for token in weekday_s.split(",")]
-    if any(day is None for day in weekdays):
-        raise ValueError(
-            "Unsupported cron weekday field. Use comma-separated numeric weekdays "
-            "like '1' for Monday."
+        if not should_retrain:
+            print("Volume threshold not met — skipping retrain.")
+            return {"status": "skipped"}
+
+        user_data_dir = component_ingest_data(train_ids, val_ids, test_ids)
+
+        # These three steps are independent — ClearML schedules them in parallel
+        candidate_resnet = component_train_resnet50(user_data_dir)
+        candidate_mobilenet = component_train_mobilenet(user_data_dir)
+        candidate_efficientnet = component_train_efficientnet(user_data_dir)
+
+        winner = component_eval_model(
+            candidate_resnet, candidate_mobilenet, candidate_efficientnet,
+            user_data_dir,
         )
+        winner_test_acc = component_get_test_result(winner, user_data_dir)
+        promoted, prod_test_acc = component_evaluate_promotion(winner, winner_test_acc, user_data_dir)
 
-    print(f"Registering weekly pipeline schedule (cron: '{cron}')")
+        if promoted:
+            component_upload_promoted(winner, winner_test_acc, prod_test_acc)
 
-    scheduler = TaskScheduler(
-        sync_frequency_minutes=60,  # how often the scheduler checks for pending tasks to run
-    )
-    scheduler.add_task(
-        schedule_function=build_and_run_pipeline,
-        queue=CONTROLLER_QUEUE,
-        name=f"{PIPELINE_NAME} — Weekly",
-        minute=minute,
-        hour=hour,
-        weekdays=weekdays,
-        target_project=CLEARML_PROJECT,
-        execute_immediately=True,
-    )
-    scheduler.start_remotely()
-    print("Scheduler registered as a ClearML service task.")
+        print(f"\nPipeline complete | winner={winner['config_name']} | promoted={promoted} | test_acc={float(winner_test_acc):.4f}")
+        return {"status": "done", "promoted": promoted, "winner": winner["config_name"], "test_acc": winner_test_acc}
+
+    finally:
+        shutil.rmtree(PIPELINE_TMP_DIR, ignore_errors=True)
+        print(f"Cleaned up {PIPELINE_TMP_DIR}")
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -717,33 +472,16 @@ def register_schedule(cron: str = WEEKLY_CRON) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EyeSist retrain pipeline")
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument(
-        "--schedule",
-        action="store_true",
-        help="Register weekly ClearML scheduler (run once to activate)",
-    )
-    mode.add_argument(
-        "--run-now",
-        action="store_true",
-        help="Trigger the pipeline immediately on ClearML agents (manual override)",
-    )
-    mode.add_argument(
-        "--run-local",
-        action="store_true",
-        help="Run all steps locally in this process (debug only)",
-    )
-    parser.add_argument(
-        "--cron",
-        default=WEEKLY_CRON,
-        metavar="EXPR",
-        help=f"Cron expression for --schedule (default: '{WEEKLY_CRON}' = 2am UTC Monday)",
-    )
+    mode.add_argument("--run-local", action="store_true",
+                      help="Run all steps locally in this process (used by cron job)")
+    mode.add_argument("--run-now", action="store_true",
+                      help="Trigger on ClearML agents (NOTE: local /tmp/ paths not shared across agents)")
+    parser.add_argument("--force", action="store_true",
+                        help="Skip volume threshold check and run regardless")
     args = parser.parse_args()
 
-    if args.schedule:
-        register_schedule(cron=args.cron)
+    if args.run_local:
+        PipelineDecorator.run_locally()
+        retrain_pipeline(force=args.force)
     elif args.run_now:
-        print("Triggering pipeline immediately on ClearML agents...")
-        build_and_run_pipeline()
-    elif args.run_local:
-        build_and_run_pipeline(run_locally=True)
+        retrain_pipeline(force=args.force)
