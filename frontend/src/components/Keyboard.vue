@@ -53,17 +53,26 @@
 
     <!-- Row 3: Space + Backspace -->
     <div class="bottom-row">
+      <!-- NEW: Clear button -->
       <button
-        :class="['key', 'space', isFocused('bottom', 0) ? 'active-key' : '']"
+        :class="['key', 'clear', isFocused('bottom', 0) ? 'active-key' : '']"
+        @click="clearText"
+      >
+        Clear Text
+      </button>
+
+      <button
+        :class="['key', 'space', isFocused('bottom', 1) ? 'active-key' : '']"
         @click="pressKey('SPACE')"
       >
         SPACE
       </button>
+
       <button
-        :class="['key', 'delete', isFocused('bottom', 1) ? 'active-key' : '']"
+        :class="['key', 'delete', isFocused('bottom', 2) ? 'active-key' : '']"
         @click="pressKey('⌫')"
       >
-        ⌫
+        Backspace
       </button>
     </div>
 
@@ -138,7 +147,7 @@ const cursor = ref({
   layout: 0,      // 0..layouts.length (last = Speak)
   suggestions: 0,
   keys: 0,
-  bottom: 0,      // 0=SPACE 1=backspace
+  bottom: 0, // now 0=clear, 1=space, 2=delete
 });
 
 const isFocused = (section, index) =>
@@ -165,6 +174,12 @@ const getIndex = (row, col) => {
   for (let r = 0; r < row && r < qwertyRowLengths.length; r++) base += qwertyRowLengths[r];
   const rowLen = qwertyRowLengths[Math.min(row, qwertyRowLengths.length - 1)];
   return base + Math.max(0, Math.min(col, rowLen - 1));
+};
+
+// Clear text
+const clearText = () => {
+  setText("");        // wipe everything
+  resetMultiTap();    // prevent stuck preview letter
 };
 
 // Section order
@@ -256,14 +271,21 @@ const moveSelection = (dir) => {
   }
 
   else if (sec === "bottom") {
-    if (dir === "left")  cursor.value.bottom = 0;
-    if (dir === "right") cursor.value.bottom = 1;
+    if (dir === "left") {
+      cursor.value.bottom = Math.max(0, cursor.value.bottom - 1);
+    }
+    if (dir === "right") {
+      cursor.value.bottom = Math.min(2, cursor.value.bottom + 1);
+    }
     if (dir === "up") {
       const lastRow = keysRowCount.value - 1;
       const lastRowLen = selectedLayout.value === "NOKIA" ? 3 : qwertyRowLengths[lastRow];
-      const targetCol = cursor.value.bottom === 0
-        ? Math.floor(lastRowLen / 3)
-        : lastRowLen - 1;
+
+      let targetCol;
+      if (cursor.value.bottom === 0) targetCol = 0; // clear
+      else if (cursor.value.bottom === 1) targetCol = Math.floor(lastRowLen / 2); // space
+      else targetCol = lastRowLen - 1; // delete
+
       cursor.value.keys = getIndex(lastRow, targetCol);
       focusedSection.value = "keys";
     }
@@ -286,7 +308,9 @@ const pressActive = () => {
     const key = currentKeys.value[cursor.value.keys];
     pressKey(key.main ?? key);
   } else if (sec === "bottom") {
-    pressKey(cursor.value.bottom === 0 ? "SPACE" : "⌫");
+    if (cursor.value.bottom === 0) clearText();
+    else if (cursor.value.bottom === 1) pressKey("SPACE");
+    else pressKey("⌫");
   }
 };
 
@@ -328,7 +352,6 @@ watch(direction, (dir) => {
   background: #1e293b;
   padding: 16px;
   border-radius: 12px;
-  margin-top: 20px;
 }
 
 .layout-buttons {
@@ -374,20 +397,22 @@ watch(direction, (dir) => {
 
 .keys {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   justify-content: center;
 }
-.keys.qwerty { grid-template-columns: repeat(10, 50px); }
-.keys.qwerty .key { width: 100%; height: 50px; }
-.keys.nokia  { grid-template-columns: repeat(3, 50px); }
-.keys.nokia  .key { width: 100%; height: 50px; }
+
+.keys.qwerty { grid-template-columns: repeat(10, 40px); }
+.keys.qwerty .key { width: 40px; height: 40px; font-size: 14px; }
+
+.keys.nokia  { grid-template-columns: repeat(3, 40px); }
+.keys.nokia  .key { width: 40px; height: 40px; }
 
 .key {
-  width: 50px;
-  height: 50px;
+  width: 40px;
+  height: 40px;
   background: #334155;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   color: white;
   cursor: pointer;
   display: flex;
@@ -397,17 +422,26 @@ watch(direction, (dir) => {
 }
 
 .nokia-key { display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.nokia-key .main { font-size: 16px; font-weight: bold; }
-.nokia-key .sub  { font-size: 10px; color: #94a3b8; }
+.nokia-key .main { font-size: 14px; font-weight: bold; }
+.nokia-key .sub  { font-size: 9px; color: #94a3b8; }
 
 .bottom-row {
   display: flex;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 8px;
 }
-.bottom-row .key { aspect-ratio: auto; height: 50px; }
+.bottom-row .key { aspect-ratio: auto; height: 40px; }
 .space  { flex: 2; }
 .delete { flex: 1; }
+
+.clear {
+  flex: 1;
+  background: #ef4444;
+}
+
+.clear:hover {
+  background: #dc2626;
+}
 
 .active-key {
   background: #3b82f6 !important;
