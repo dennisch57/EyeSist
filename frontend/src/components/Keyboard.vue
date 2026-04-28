@@ -32,24 +32,66 @@
     </div>
 
     <!-- Row 2: Main keys grid -->
-    <div :class="['keys', selectedLayout.toLowerCase()]">
+    <div v-if="selectedLayout !== 'NOKIA' || !isSelecting"
+     :class="['keys', selectedLayout.toLowerCase()]">
+
+    <button
+      v-for="(key, index) in currentKeys"
+      :key="key.main || key"
+      :class="['key', isFocused('keys', index) ? 'active-key' : '']"
+      @click="pressKey(key.main || key)"
+    >
+      <template v-if="selectedLayout === 'NOKIA'">
+        <div class="nokia-key">
+          <span class="main">{{ key.main }}</span>
+          <span class="sub">{{ key.sub }}</span>
+        </div>
+      </template>
+      <template v-else>
+        {{ key }}
+      </template>
+    </button>
+  </div>
+
+  <!-- HIERARCHICAL MODE -->
+  <div v-else class="hierarchical">
+
+    <!-- number -->
+    <div class="top-number">
       <button
-        v-for="(key, index) in currentKeys"
-        :key="key.main || key"
-        :class="['key', isFocused('keys', index) ? 'active-key' : '']"
-        @click="pressKey(key.main || key)"
+        class="key"
+        :class="{ 'active-key': hierCursor === 0 }"
+        @click="pressKey(activeNumber)"
       >
-        <template v-if="selectedLayout === 'NOKIA'">
-          <div class="nokia-key">
-            <span class="main">{{ key.main }}</span>
-            <span class="sub">{{ key.sub }}</span>
-          </div>
-        </template>
-        <template v-else>
-          {{ key }}
-        </template>
+        {{ activeNumber }}
       </button>
     </div>
+
+    <!-- letters -->
+    <div class="letters-row">
+      <button
+        v-for="(letter, i) in activeLetters"
+        :key="letter"
+        class="key"
+        :class="{ 'active-key': hierCursor === i + 1 }"
+        @click="pressKey(letter)"
+      >
+        {{ letter }}
+      </button>
+    </div>
+
+    <!-- cancel -->
+    <div class="cancel-row">
+      <button
+        class="key cancel"
+        :class="{ 'active-key': hierCursor === activeLetters.length + 1 }"
+        @click="pressKey('CANCEL')"
+      >
+        ✕
+      </button>
+    </div>
+
+  </div>
 
     <!-- Row 3: Space + Backspace -->
     <div class="bottom-row">
@@ -93,6 +135,19 @@ const { direction } = useEyeStore();
 // Layout
 const selectedLayout = ref("QWERTY");
 const layouts = ["QWERTY", "NOKIA"];
+
+const isSelecting = ref(false);      // are we in stage 2?
+const activeNumber = ref(null);      // e.g. "2"
+const activeLetters = ref([]);       // ["a","b","c"]
+
+// Hierarchical mode state
+const hierCursor = ref(0);
+
+const hierItems = computed(() => [
+  activeNumber.value,
+  ...activeLetters.value,
+  "CANCEL"
+]);
 
 // Keys
 const qwertyKeys = [
@@ -196,9 +251,65 @@ const nextSection = (sec) => {
   return null;
 };
 
+const multiTapMap = {
+  "2": ["a", "b", "c"],
+  "3": ["d", "e", "f"],
+  "4": ["g", "h", "i"],
+  "5": ["j", "k", "l"],
+  "6": ["m", "n", "o"],
+  "7": ["p", "q", "r", "s"],
+  "8": ["t", "u", "v"],
+  "9": ["w", "x", "y", "z"]
+};
+
 // Navigation
 const moveSelection = (dir) => {
   const sec = focusedSection.value;
+
+  if (selectedLayout.value === "NOKIA" && isSelecting.value) {
+
+    const letterStart = 1;
+    const letterEnd = activeLetters.value.length; // inclusive end index = letterEnd
+    const cancelIndex = letterEnd + 1;
+
+    // 👉 RIGHT / LEFT (stay in same row)
+    if (dir === "right") {
+      if (hierCursor.value >= letterStart && hierCursor.value <= letterEnd) {
+        // move within letters
+        hierCursor.value = Math.min(letterEnd, hierCursor.value + 1);
+      }
+    }
+
+    if (dir === "left") {
+      if (hierCursor.value >= letterStart && hierCursor.value <= letterEnd) {
+        hierCursor.value = Math.max(letterStart, hierCursor.value - 1);
+      }
+    }
+
+    // 👉 DOWN
+    if (dir === "down") {
+      if (hierCursor.value === 0) {
+        const middleIndex = Math.floor(activeLetters.value.length / 2);
+        hierCursor.value = 1 + middleIndex;
+      } else if (hierCursor.value >= letterStart && hierCursor.value <= letterEnd) {
+        // letter → cancel
+        hierCursor.value = cancelIndex;
+      }
+    }
+
+    // 👉 UP
+    if (dir === "up") {
+      if (hierCursor.value === cancelIndex) {
+        const middleIndex = Math.floor(activeLetters.value.length / 2);
+        hierCursor.value = 1 + middleIndex;
+      } else if (hierCursor.value >= letterStart && hierCursor.value <= letterEnd) {
+        // letter → number
+        hierCursor.value = 0;
+      }
+    }
+
+    return;
+  }
 
   if (sec === "layout") {
     const max = layouts.length; // index of Speak button
@@ -294,6 +405,14 @@ const moveSelection = (dir) => {
 
 // Activate focused element
 const pressActive = () => {
+
+  // HIERARCHICAL MODE
+  if (selectedLayout.value === "NOKIA" && isSelecting.value) {
+    const selected = hierItems.value[hierCursor.value];
+    pressKey(selected);
+    return;
+  }
+
   const sec = focusedSection.value;
   if (sec === "layout") {
     if (cursor.value.layout < layouts.length) {
@@ -314,7 +433,64 @@ const pressActive = () => {
   }
 };
 
-const pressKey = (key) => addKey(key, selectedLayout.value);
+const pressKey = (key) => {
+
+  // ===== NOKIA MODE =====
+  if (selectedLayout.value === "NOKIA") {
+
+    // ===== STAGE 2 =====
+    if (isSelecting.value) {
+
+      // ❌ cancel
+      if (key === "CANCEL") {
+        isSelecting.value = false;
+        return;
+      }
+
+      // ✅ pressing SAME number again → stay in selection (important fix)
+      if (key === activeNumber.value) {
+        addKey(key);        // type the number
+        isSelecting.value = false;
+        return;
+      }
+
+      // ✅ selecting letter
+      if (activeLetters.value.includes(key)) {
+        addKey(key);
+        isSelecting.value = false;
+        return;
+      }
+
+      return;
+    }
+
+    // ===== STAGE 1 =====
+
+    // ✅ number keys (2–9)
+    if (multiTapMap[key]) {
+      activeNumber.value = key;
+      activeLetters.value = multiTapMap[key];
+      isSelecting.value = true;
+
+      const middleIndex = Math.floor(activeLetters.value.length / 2);
+
+      // +1 because index 0 = number
+      hierCursor.value = 1 + middleIndex;
+      return;
+    }
+
+    // ✅ allow 0 to type "0"
+    if (key === "0") {
+      addKey("0");
+      return;
+    }
+
+    return;
+  }
+
+  // ===== QWERTY =====
+  addKey(key);
+};
 
 // Keyboard events
 const handleKeydown = (e) => {
@@ -452,5 +628,32 @@ watch(direction, (dir) => {
   margin-top: 8px;
   color: #94a3b8;
   font-size: 12px;
+}
+
+.hierarchical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.top-number {
+  display: flex;
+  justify-content: center;
+}
+
+.letters-row {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.cancel-row {
+  display: flex;
+  justify-content: center;
+}
+
+.cancel {
+  background: #ef4444;
 }
 </style>
