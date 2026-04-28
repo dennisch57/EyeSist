@@ -45,7 +45,7 @@ const { text } = keyboardText();
 
 .text-box {
   width: 100%;
-  height: 215px;
+  height: 260px;
   background: #0f172a;
   border-radius: 8px;
   padding: 10px;

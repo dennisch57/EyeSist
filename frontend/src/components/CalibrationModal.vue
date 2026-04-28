@@ -85,6 +85,14 @@ const frameSize = ref({ width: 1, height: 1 });
 let stream = null;
 const sessionId = ensureSessionId();
 
+// Play a sound when a calibration step is completed to prompt the user to move to the next position
+const playBeep = () => {
+  const audio = new Audio("/sounds/ding.mp3"); // or any built-in sound
+  audio.play().catch(() => {
+    err => console.log("Audio blocked:", err)
+  });
+};
+
 const currentStepConfig = computed(() => steps[currentStep.value] ?? steps[steps.length - 1]);
 
 const startCamera = async () => {
@@ -227,6 +235,7 @@ const captureCurrentLabel = async () => {
 
     currentStep.value += 1;
     if (currentStep.value < steps.length) {
+      playBeep();
       return;
     }
 
