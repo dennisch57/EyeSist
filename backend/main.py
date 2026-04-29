@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from azure_storage import download_ridge_model, ensure_container, load_manifest, ridge_model_exists
+from azure_storage import download_backbone, download_ridge_model, ensure_container, load_manifest, ridge_model_exists
 from eye_detector import detect_eyes
 from model import extract_features, predict_base
 from pipeline.step_calibrate_user import (
@@ -29,7 +29,7 @@ from runtime_config import get_runtime_device_str
 from training_config import LABELS
 
 app = FastAPI()
-SMOOTHING_WINDOW = 8
+SMOOTHING_WINDOW = 5
 TARGET_CALIBRATION_IMAGES = 100
 RIDGE_CACHE_MAX_SIZE = 64
 RIDGE_MODEL_CACHE: OrderedDict[str, Any] = OrderedDict()
@@ -40,6 +40,11 @@ RIDGE_MODEL_CACHE: OrderedDict[str, Any] = OrderedDict()
 def log_runtime_device() -> None:
     print(f"EyeSist backend starting on device: {get_runtime_device_str()}")
     ensure_container()
+    from model import MODEL_PATH
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    with open(MODEL_PATH, "wb") as f:
+        f.write(download_backbone())
+    print(f"Backbone loaded from Azure → {MODEL_PATH}")
 
 
 app.add_middleware(
