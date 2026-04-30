@@ -479,12 +479,7 @@ const pressKey = (key) => {
       return;
     }
 
-    // ✅ allow 0 to type "0"
-    if (key === "0") {
-      addKey("0");
-      return;
-    }
-
+    addKey(key);
     return;
   }
 
