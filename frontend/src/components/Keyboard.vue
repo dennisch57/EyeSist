@@ -4,6 +4,7 @@
     <!-- Row 0: Layout switcher + Speak button -->
     <div class="layout-buttons">
       <button
+        data-webgazer-key
         v-for="(layout, i) in layouts"
         :key="layout"
         :class="['btn', selectedLayout === layout ? 'active' : '', isFocused('layout', i) ? 'active-key' : '']"
@@ -12,6 +13,7 @@
         {{ layout }}
       </button>
       <button
+        data-webgazer-key
         :class="['btn', 'speak-btn', isFocused('layout', layouts.length) ? 'active-key' : '']"
         @click="speakText"
       >
@@ -22,6 +24,7 @@
     <!-- Row 1: Autocomplete suggestions (only when available) -->
     <div v-if="suggestions.length > 0" class="suggestions-row">
       <button
+        data-webgazer-key
         v-for="(word, i) in suggestions"
         :key="word"
         :class="['suggestion-btn', isFocused('suggestions', i) ? 'active-key' : '']"
@@ -36,6 +39,7 @@
      :class="['keys', selectedLayout.toLowerCase()]">
 
     <button
+      data-webgazer-key
       v-for="(key, index) in currentKeys"
       :key="key.main || key"
       :class="['key', isFocused('keys', index) ? 'active-key' : '']"
@@ -59,6 +63,7 @@
     <!-- number -->
     <div class="top-number">
       <button
+        data-webgazer-key
         class="key"
         :class="{ 'active-key': hierCursor === 0 }"
         @click="pressKey(activeNumber)"
@@ -70,6 +75,7 @@
     <!-- letters -->
     <div class="letters-row">
       <button
+        data-webgazer-key
         v-for="(letter, i) in activeLetters"
         :key="letter"
         class="key"
@@ -83,6 +89,7 @@
     <!-- cancel -->
     <div class="cancel-row">
       <button
+        data-webgazer-key
         class="key cancel"
         :class="{ 'active-key': hierCursor === activeLetters.length + 1 }"
         @click="pressKey('CANCEL')"
@@ -97,6 +104,7 @@
     <div class="bottom-row">
       <!-- NEW: Clear button -->
       <button
+        data-webgazer-key
         :class="['key', 'clear', isFocused('bottom', 0) ? 'active-key' : '']"
         @click="clearText"
       >
@@ -104,6 +112,7 @@
       </button>
 
       <button
+        data-webgazer-key
         :class="['key', 'space', isFocused('bottom', 1) ? 'active-key' : '']"
         @click="pressKey('SPACE')"
       >
@@ -111,6 +120,7 @@
       </button>
 
       <button
+        data-webgazer-key
         :class="['key', 'delete', isFocused('bottom', 2) ? 'active-key' : '']"
         @click="pressKey('⌫')"
       >

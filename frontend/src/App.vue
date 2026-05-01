@@ -1,6 +1,7 @@
 <script setup>
 import AppHeader from "@/components/AppHeader.vue";
-import Camera from "@/components/Camera.vue";
+// import Camera from "@/components/Camera.vue";
+import CameraWebGazer from "@/components/CameraWebGazer.vue";
 import TextOutput from "@/components/TextOutput.vue";
 import Keyboard from "@/components/Keyboard.vue";
 </script>
@@ -17,7 +18,7 @@ import Keyboard from "@/components/Keyboard.vue";
     </div>
 
     <div class="camera-section">
-      <Camera />
+      <CameraWebGazer />
     </div>
   </div>
 </template>
