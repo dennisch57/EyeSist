@@ -58,10 +58,18 @@
           v-for="(pt, i) in calibrationPoints"
           :key="i"
           class="cal-dot"
-          :class="{ current: i === calibrationIndex, done: i < calibrationIndex }"
+          :class="{
+            current: i === calibrationIndex,
+            done: i < calibrationIndex
+          }"
           :style="{ left: pt.x + '%', top: pt.y + '%' }"
           @click="handleCalDotClick(i)"
-        />
+        >
+          <!-- Show click count on the active dot -->
+          <span v-if="i === calibrationIndex" class="dot-count">
+            {{ currentDotClicks }}/{{ CLICKS_PER_DOT }}
+          </span>
+        </div>
       </div>
     </Teleport>
   </div>
@@ -127,12 +135,33 @@ const startCalibration = () => {
   isCalibrating.value = true
 }
 
+// ── Calibration logic ─────────────────────────────────────────────────────
+const CLICKS_PER_DOT = 5
+const currentDotClicks = ref(0)
+
 const handleCalDotClick = (i) => {
   if (i !== calibrationIndex.value) return
-  // WebGazer automatically learns from clicks — just advance the index
-  calibrationIndex.value++
-  if (calibrationIndex.value >= calibrationPoints.value) {
-    isCalibrating.value = false
+  if (calibrationIndex.value >= calibrationPoints.length) return
+
+  const px = (calibrationPoints[i].x / 100) * window.innerWidth
+  const py = (calibrationPoints[i].y / 100) * window.innerHeight
+
+  // Record this click as training data
+  window.webgazer.recordScreenPosition(px, py, 'click')
+  currentDotClicks.value++
+
+  // Only advance to next dot after enough clicks
+  if (currentDotClicks.value >= CLICKS_PER_DOT) {
+    currentDotClicks.value = 0
+    calibrationIndex.value++
+
+    if (calibrationIndex.value === calibrationPoints.length) {
+      isCalibrating.value = false
+      calibrationIndex.value = 0
+
+      const data = window.webgazer.getRegression()
+      console.log('Regression data after calibration:', data)
+    }
   }
 }
 
@@ -298,6 +327,9 @@ onUnmounted(() => {
   border: 3px solid #64748b;
   cursor: pointer;
   transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .cal-dot.current {
@@ -310,6 +342,13 @@ onUnmounted(() => {
 .cal-dot.done {
   background: #22c55e;
   border-color: #16a34a;
+}
+
+.dot-count {
+  color: white;
+  font-size: 9px;
+  font-weight: bold;
+  pointer-events: none;
 }
 
 @keyframes pulse {
