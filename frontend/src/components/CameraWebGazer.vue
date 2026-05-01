@@ -106,6 +106,8 @@ const startTracking = async () => {
 
   wg.applyKalmanFilter(true)
 
+  wg.removeMouseEventListeners()
+
   wg.showVideo(false)
   wg.showFaceOverlay(false)
   wg.showPredictionPoints(true)
